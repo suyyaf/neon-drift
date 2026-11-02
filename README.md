@@ -22,6 +22,7 @@ python -m http.server 8123
 | Hold Left Mouse | Fire |
 | `Space` / `Shift` | Dash (brief invulnerability) |
 | `Q` / `E` | Cycle weapon |
+| `M` | Mute / unmute sound |
 | `Esc` | Pause / resume |
 
 The game **auto-pauses** when the window loses focus or the tab is hidden, so a
@@ -64,6 +65,27 @@ Enemies are always pushed out of your hull, so nothing can camp on your ship.
 
 Enemies also push each other apart via a spatial-grid separation pass, so a
 large wave reads as a swarm instead of a single stacked blob.
+
+## Soundtrack
+
+The entire soundtrack is **synthesised at runtime** — there are no audio files.
+`js/music.js` is a small synthwave engine: a lookahead scheduler queues notes
+slightly ahead of the audio clock so timing stays tight even when frames hitch.
+
+| Track | When | Feel |
+| --- | --- | --- |
+| `menu` | Title screen | Slow, atmospheric, heavy pad |
+| `track` | Normal waves | 116 BPM, drums + bass + arp over Am–F–C–G |
+| `boss` | Boss fight | 140 BPM, four-on-the-floor kick, saw arp |
+| `over` | Game over | Sparse, decaying outro |
+
+All four share one chord progression so switching between them feels musical
+rather than jarring. The main loop also gains intensity (drums and bass get
+louder) as your wave count climbs.
+
+Sound can be toggled with the **SOUND ON/OFF** button or the `M` key. The
+setting persists in `localStorage`. Music and SFX are on separate gain buses, so
+muting affects both while they stay independently balanced.
 
 ## Performance notes
 

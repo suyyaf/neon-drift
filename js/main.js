@@ -105,6 +105,7 @@
     b.splits = 0;
     game.boss = b;
     ND.audio.play('boss');
+    ND.music.play('boss');
     ND.addShake(10);
     toast('WARNING // ' + (game.wave) + '-CLASS SINGULARITY', '#ff2b8a');
   }
@@ -202,6 +203,7 @@
       game.boss = null;
       toast('SINGULARITY PURGED', '#3bff9e');
       ND.addShake(18);
+      ND.music.play('track');
     }
   }
 
@@ -232,6 +234,9 @@
       } else {
         toast('WAVE ' + game.wave, '#22d3ee');
         ND.audio.play('level');
+        ND.music.play('track');
+        // The loop gets heavier as the run climbs.
+        ND.music.intensity = Math.min(1.35, 1 + game.wave * 0.03);
       }
     }
 
@@ -1020,6 +1025,8 @@
     game.state = 'playing';
     hideAllOverlays();
     $('hudbar').classList.remove('hidden');
+    ND.music.intensity = 1;
+    ND.music.play('track');
     toast('WAVE 1 // ENGAGE', '#22d3ee');
     last = performance.now();
   }
@@ -1032,12 +1039,14 @@
     if (game.state !== 'playing') return;
     game.state = 'paused';
     ND.mouse.down = false;
+    if (ND.music.ctx) ND.music.ctx.suspend();
     $('pause').classList.remove('hidden');
   }
 
   function resumeGame() {
     if (game.state !== 'paused') return;
     game.state = 'playing';
+    if (ND.music.ctx) ND.music.ctx.resume();
     last = performance.now();
     $('pause').classList.add('hidden');
   }
@@ -1052,6 +1061,8 @@
     $('hudbar').classList.add('hidden');
     clearWorld();
     showMenuBest();
+    ND.music.intensity = 1;
+    ND.music.play('menu');
     $('start').classList.remove('hidden');
   }
 
@@ -1069,6 +1080,7 @@
     if (game.state === 'dead') return;
     game.state = 'dead';
     ND.mouse.down = false;
+    ND.music.play('over');
     ND.addShake(20);
     ND.audio.play('explode');
     ND.spawnParticles(game.player.x, game.player.y, 70, {
@@ -1153,6 +1165,17 @@
 
   // ---------------- UI wiring ----------------
   $('play').addEventListener('click', startGame);
+
+  // Browsers require a gesture before audio can start, so the title-screen
+  // music begins on the first interaction with the page.
+  function unlockAudio() {
+    ND.audio.init();
+    if (ND.music.pending || !ND.music.current) ND.music.play('menu');
+    window.removeEventListener('pointerdown', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
+  }
+  window.addEventListener('pointerdown', unlockAudio);
+  window.addEventListener('keydown', unlockAudio);
   $('restart').addEventListener('click', startGame);
   $('btnMenu').addEventListener('click', stopGame);
 
@@ -1175,6 +1198,38 @@
     else if (game.state === 'paused') resumeGame();
   });
   $('btnStop').addEventListener('click', stopGame);
+
+  // Sound toggle: mutes music and sfx together, remembered between sessions.
+  let muted = false;
+  try { muted = localStorage.getItem('neondrift.muted.v1') === '1'; } catch (e) { muted = false; }
+
+  function applyMute() {
+    ND.audio.muted = muted;
+    ND.music.setEnabled(!muted);
+    const btn = $('btnMute');
+    if (btn) {
+      btn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
+      btn.classList.toggle('is-off', muted);
+    }
+    try { localStorage.setItem('neondrift.muted.v1', muted ? '1' : '0'); } catch (e) { /* ignore */ }
+  }
+
+  $('btnMute').addEventListener('click', (e) => {
+    e.stopPropagation();
+    muted = !muted;
+    applyMute();
+  });
+
+  // M toggles sound from the keyboard.
+  window.addEventListener('keydown', (e) => {
+    if (e.target && e.target.tagName === 'INPUT') return;
+    if (e.key === 'm' || e.key === 'M') {
+      muted = !muted;
+      applyMute();
+    }
+  });
+
+  applyMute();
 
   $('btnResume').addEventListener('click', (e) => {
     e.stopPropagation();

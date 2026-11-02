@@ -201,6 +201,11 @@ window.ND = window.ND || {};
       const data = buf.getChannelData(0);
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
       this.noiseBuf = buf;
+
+      // The music engine shares the context but has its own gain bus, so the
+      // music/sfx volumes stay independent.
+      ND.noiseBuffer = buf;
+      if (ND.music) ND.music.attach(this.ctx, this.ctx.destination);
     }
 
     tone(freq, endFreq, dur, type, vol) {

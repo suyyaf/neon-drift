@@ -427,6 +427,16 @@ kbd {
   box-shadow: 0 0 18px rgba(255, 59, 107, 0.4);
 }
 
+.chip.is-off {
+  color: #55697a;
+  border-color: rgba(120, 140, 155, 0.25);
+}
+
+.chip.is-off:hover {
+  color: #9fc4d4;
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
 .row {
   display: flex;
   gap: 12px;
