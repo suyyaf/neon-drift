@@ -350,9 +350,10 @@
       return;
     }
 
-    // Scrap is the upgrade currency: every kill pays out.
+    // Scrap is the upgrade currency: every kill pays out. The Salvage Rig meta
+    // upgrade raises the payout for the whole run.
     if (!kamikaze) {
-      const gain = ND.scrapValue(e);
+      const gain = ND.scrapValue(e, p.scrapMul || 1);
       game.scrap += gain;
       game.scrapGain = Math.min(1, (game.scrapGain || 0) + 0.28);
       if (e.boss) {
@@ -1244,12 +1245,12 @@
           '<span class="costunit">SCRAP</span>' +
           (afford ? '' : '<span class="costmiss">need ' + (cost - game.scrap) + '</span>') +
         '</div>' +
-        unlocked.map((s) =>
+        '<div class="synwrap">' + unlocked.map((s) =>
           '<div class="synline" style="color:' + s.color + '">' +
             '<span class="bdot" style="background:' + s.color + ';box-shadow:0 0 7px ' + s.color + '"></span>' +
             'UNLOCKS ' + s.name +
           '</div>'
-        ).join('');
+        ).join('') + '</div>';
       el.addEventListener('click', () => chooseUpgrade(up));
       container.appendChild(el);
     });
@@ -1382,6 +1383,73 @@
     else el.classList.add('hidden');
   }
 
+  // ---------------- meta progression UI ----------------
+  // Renders the persistent-upgrade tree into whichever panel is on screen
+  // (title or game over). Only one panel exists per screen, so a shared
+  // renderer keeps the two in sync for free.
+  function renderMeta() {
+    const panels = [
+      { list: $('metaList'), cores: $('metaCores') },
+      { list: $('metaListEnd'), cores: $('metaCoresEnd') }
+    ];
+    const earned = $('coresEarned');
+    if (earned) {
+      earned.textContent = game.coresEarned
+        ? '+' + game.coresEarned + ' CORES BANKED'
+        : '';
+      earned.classList.toggle('hidden', !game.coresEarned);
+    }
+
+    for (const p of panels) {
+      if (p.cores) p.cores.textContent = meta.cores;
+      if (!p.list) continue;
+
+      p.list.innerHTML = ND.META.map((up) => {
+        const lvl = meta.levels[up.id] || 0;
+        const maxed = lvl >= up.max;
+        const cost = ND.metaCost(up, lvl);
+        const afford = !maxed && meta.cores >= cost;
+        return (
+          '<button type="button" class="meta-row' +
+            (maxed ? ' maxed' : '') + (afford ? ' ready' : '') + '"' +
+            ' data-meta="' + up.id + '"' + (maxed ? ' disabled' : '') + '>' +
+            '<span class="mico" style="color:' + up.color + '">' + ND.iconSvg(up.icon, 16) + '</span>' +
+            '<span class="mtext">' +
+              '<span class="mname">' + up.name + '</span>' +
+              '<span class="mdesc">' + up.desc + '</span>' +
+            '</span>' +
+            '<span class="mmeta">' +
+              '<span class="mpips">' + renderPips(lvl, up.max) + '</span>' +
+              '<span class="mcost">' + (maxed ? 'MAX' : cost + ' ◆') + '</span>' +
+            '</span>' +
+          '</button>'
+        );
+      }).join('');
+
+      p.list.onclick = (e) => {
+        const btn = e.target.closest('[data-meta]');
+        if (btn) buyMeta(btn.getAttribute('data-meta'));
+      };
+    }
+  }
+
+  function buyMeta(id) {
+    const up = ND.META_BY_ID[id];
+    if (!up) return;
+    const lvl = meta.levels[id] || 0;
+    if (lvl >= up.max) return;
+    const cost = ND.metaCost(up, lvl);
+    if (meta.cores < cost) {
+      ND.audio.play('switch');
+      return;
+    }
+    meta.cores = Math.min(9999999, meta.cores - cost);
+    meta.levels[id] = lvl + 1;
+    saveMeta(meta);
+    ND.audio.play('synergy');
+    renderMeta();
+  }
+
   function chooseUpgrade(up) {
     if (game.state !== 'upgrade') return;
 
@@ -1481,6 +1549,7 @@
   const BOARD_KEY = 'neondrift.board.v1';
   const BOARD_SIZE = 8;
   const NAME_KEY = 'neondrift.name.v1';
+  const META_KEY = 'neondrift.meta.v1';
 
   // Anything that comes back from localStorage or a name field is untrusted.
   // These helpers keep the leaderboard renderable and stop a hand-edited save
@@ -1529,6 +1598,64 @@
       /* storage can be blocked; never let scoring crash a run */
     }
   }
+
+  // ---------------- meta progression ----------------
+  // Same threat model as the leaderboard: this lives in localStorage, so it is
+  // untrusted. Every field is clamped to its legal range on load, which means a
+  // hand-edited save can only ever grant itself the maximum the UI would allow
+  // anyway — it cannot inject markup, produce NaN, or break rendering.
+  function defaultMeta() {
+    return { cores: 0, levels: {}, runs: 0, bestWave: 0 };
+  }
+
+  function sanitizeMeta(raw) {
+    const out = defaultMeta();
+    if (!raw || typeof raw !== 'object') return out;
+
+    out.cores = safeNum(raw.cores, 9999999);
+    out.runs = safeNum(raw.runs, 9999999);
+    out.bestWave = safeNum(raw.bestWave, 9999);
+
+    const lv = raw.levels;
+    if (lv && typeof lv === 'object' && !Array.isArray(lv)) {
+      for (const up of ND.META) {
+        const v = Math.min(safeNum(lv[up.id], up.max), up.max);
+        if (v > 0) out.levels[up.id] = v;
+      }
+    }
+    return out;
+  }
+
+  function loadMeta() {
+    try {
+      const raw = localStorage.getItem(META_KEY);
+      if (!raw) return defaultMeta();
+      const parsed = JSON.parse(raw);
+      const clean = sanitizeMeta(parsed);
+      // If the stored value differed from the cleaned one (hand-edited save,
+      // older schema, corrupt field), rewrite it now so the junk does not
+      // linger in storage for the life of the profile.
+      try {
+        if (JSON.stringify(parsed) !== JSON.stringify(clean)) {
+          localStorage.setItem(META_KEY, JSON.stringify(clean));
+        }
+      } catch (e) { /* write can fail; the in-memory copy is already clean */ }
+      return clean;
+    } catch (e) {
+      return defaultMeta();
+    }
+  }
+
+  function saveMeta(meta) {
+    try {
+      localStorage.setItem(META_KEY, JSON.stringify(sanitizeMeta(meta)));
+    } catch (e) {
+      /* ignore: storage can be blocked */
+    }
+  }
+
+  // Live copy used by the UI and by startGame().
+  let meta = loadMeta();
 
   function loadName() {
     try {
@@ -1608,7 +1735,7 @@
     const el = $('menuBest');
     if (!el) return;
     if (!board.length) {
-      el.textContent = 'NO RUNS RECORDED';
+      el.textContent = '';
     } else {
       el.textContent = 'BEST ' + board[0].score + '  ·  ' + board[0].name;
     }
@@ -1619,6 +1746,9 @@
   // ---------------- state transitions ----------------
   function reset() {
     game.player = new ND.Player();
+    // Permanent upgrades are applied once, on the fresh player, before the
+    // run's own upgrades layer on top.
+    ND.applyMeta(game.player, meta.levels);
     game.bullets.length = 0;
     game.enemies.length = 0;
     game.pickups.length = 0;
@@ -1635,7 +1765,7 @@
     game.streakTimer = 0;
     game.currentPicks = null;
     game.upgradeCounts = {};
-    game.scrap = 0;
+    game.scrap = ND.metaStartScrap(meta.levels);
     game.spent = 0;
     game.buys = 0;
     game.scrapGain = 0;
@@ -1703,6 +1833,7 @@
     if ($('specials')) $('specials').innerHTML = '';
     clearWorld();
     showMenuBest();
+    renderMeta();
     ND.music.intensity = 1;
     ND.music.play('menu');
     $('start').classList.remove('hidden');
@@ -1743,6 +1874,14 @@
       '<div>ELIMINATIONS &nbsp;<b>' + game.player.kills + '</b></div>' +
       '<div>FINAL SCORE &nbsp;<b>' + game.score + '</b></div>';
 
+    // Bank meta currency. This is the only place cores are granted, so a run
+    // is never worth zero — every death buys progress toward the tree.
+    const earned = ND.coresForRun(game.score, game.wave);
+    meta.cores = Math.min(9999999, meta.cores + earned);
+    meta.runs = Math.min(9999999, meta.runs + 1);
+    meta.bestWave = Math.max(meta.bestWave, game.wave);
+    saveMeta(meta);
+
     // Fill the name field with the last used callsign.
     const nameInput = $('nameInput');
     if (nameInput) {
@@ -1762,6 +1901,9 @@
       kills: game.player.kills,
       date: Date.now()
     };
+
+    game.coresEarned = earned;
+    renderMeta();
 
     // Focus the field so a player can type a name immediately.
     setTimeout(() => {
@@ -1902,4 +2044,5 @@
 
   requestAnimationFrame(frame);
   showMenuBest();
+  renderMeta();
 })(window.ND);

@@ -2,6 +2,8 @@
 
 A top-down neon arena shooter. Vanilla JS + Canvas, no dependencies, no build step.
 
+**Play it:** <https://neon-drift-delta-livid.vercel.app/> — or open `index.html`.
+
 ## Arena
 
 The arena is a **torus**: fly off the right edge and you reappear on the left;
@@ -147,6 +149,29 @@ a boss fight (escorts trickle in at 40% of the normal cap), so a long boss kill
 never freezes progression.
 Dying ends the run and shows your time, wave, kills, and score.
 
+## Persistent systems (meta progression)
+
+Scrap and upgrades reset with each run, but every run pays out **cores**
+(`score / 100 + wave / 2`, minimum 1). Spend them on the title screen or the
+game-over screen to permanently upgrade your next runs:
+
+| System | Effect | Max |
+| --- | --- | --- |
+| **Reinforced Hull** | +15 starting hull per level | 3 |
+| **Calibrated Barrels** | +7% weapon damage per level | 3 |
+| **Salvage Rig** | +12% scrap from every kill per level | 3 |
+| **Afterburner Coils** | −8% dash cooldown per level | 3 |
+| **Scrap Stipend** | +18 starting scrap per level | 3 |
+
+Prices scale with how many levels of that system you already own
+(`base * (1 + owned * 0.85)`, rounded to 5). The tree is deliberately modest —
+it softens a bad run rather than replacing the in-run build.
+
+Stored in `neondrift.meta.v1`. Like the leaderboard it is treated as **untrusted**:
+cores are clamped, levels are clamped to each system's cap, unknown keys are
+dropped, and the cleaned value is written straight back so a corrupt save heals
+itself on load.
+
 ## Upgrades and build tracker
 
 Upgrades are bought with **scrap**, earned from every kill (`score / 5`; tough
@@ -207,12 +232,26 @@ css/style.css     layout, CRT scanlines, neon buttons, upgrade cards, build pane
 js/core.js        canvas + view, math helpers, input, particles, WebAudio synth
 js/icons.js       inline SVG icon set for every upgrade
 js/music.js       procedural synthwave soundtrack
-js/entities.js    player, enemy types, pickups, upgrades, specials, synergies
-js/main.js        game loop, wave director, camera, HUD, state machine
+js/entities.js    player, enemy types, pickups, upgrades, specials, synergies, meta
+js/main.js        game loop, wave director, camera, HUD, state machine, save data
 ```
 
 Everything is global-namespaced under `window.ND` and loaded with plain
 `<script>` tags in order: `core` → `icons` → `music` → `entities` → `main`.
+
+## Deploying
+
+The site is static, so hosting is trivial. `vercel.json` sets the security
+headers (CSP, `X-Frame-Options`, `Permissions-Policy`) and disables caching on
+`js/` and `css/` so a deploy is picked up immediately.
+
+```sh
+vercel deploy            # preview URL
+vercel deploy --prod     # promote to production
+```
+
+Pushing to `git` and importing the repo in Vercel also works with no build
+settings — there is no build step.
 
 ## Tuning notes
 

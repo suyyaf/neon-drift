@@ -57,6 +57,9 @@ body::after {
   background: radial-gradient(circle at 50% 45%, rgba(10, 16, 30, 0.75), rgba(3, 5, 10, 0.94));
   backdrop-filter: blur(7px);
   animation: fade 0.18s ease-out;
+  /* The persistent-systems panel made the title taller than a short window;
+     scroll the overlay instead of cropping the launch button. */
+  overflow-y: auto;
 }
 
 .overlay.hidden { display: none; }
@@ -78,6 +81,19 @@ h1 {
   font-size: clamp(38px, 9vw, 84px);
   color: #fff;
   text-shadow: 0 0 18px rgba(34, 211, 238, 0.75), 0 0 60px rgba(34, 211, 238, 0.35);
+}
+
+/* The title screen now carries the persistent-systems panel, so it needs to
+   fit a short laptop window. Compact the hero and the key legend rather than
+   pushing the launch button below the fold. */
+@media (max-height: 820px) {
+  #start { gap: 9px; padding: 14px 24px; }
+  #start h1 { font-size: clamp(30px, 6.4vw, 58px); }
+  #start .controls { font-size: 10px; }
+  #start .controls kbd { padding: 2px 6px; font-size: 9px; }
+  .meta { margin-top: 8px; }
+  .meta-row { padding: 5px 8px; }
+  .meta-foot { margin-top: 4px; }
 }
 
 h2 { font-size: clamp(24px, 5vw, 40px); color: var(--cyan); text-shadow: 0 0 22px rgba(34, 211, 238, 0.6); }
@@ -164,6 +180,8 @@ kbd {
 
 .card {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: 210px;
   padding: 22px 18px 18px;
   text-align: left;
@@ -485,11 +503,21 @@ kbd {
 
 /* ---------- Scrap costs ---------- */
 
+/* The whole "unlocks a set" block sits in a fixed-height slot above the price,
+   so the price row lands at the same height on every card whether or not that
+   card happens to unlock a synergy. */
+.synwrap {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 34px;
+}
+
 .costrow {
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin-top: 12px;
+  margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 209, 102, 0.16);
 }
@@ -838,3 +866,185 @@ button.ghost:hover {
   border-color: var(--cyan);
   box-shadow: 0 0 22px rgba(34, 211, 238, 0.3);
 }
+
+/* ---------- Meta progression (persistent upgrades) ---------- */
+
+.meta {
+  width: min(520px, 88vw);
+  margin-top: 14px;
+  text-align: left;
+}
+
+.meta-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.16);
+}
+
+.meta-title {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: #5c7a90;
+}
+
+.meta-cores {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #7a6a44;
+}
+
+.meta-cores b {
+  font-size: 14px;
+  color: #ffd166;
+  text-shadow: 0 0 12px rgba(255, 209, 102, 0.45);
+}
+
+.meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+/* Each row is a button so the whole strip is the hit target. */
+.meta-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  text-align: left;
+  font-family: inherit;
+  color: #93aec2;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  box-shadow: none;
+  letter-spacing: 0.06em;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.meta-row:hover {
+  color: #eaf6ff;
+  background: rgba(34, 211, 238, 0.07);
+  border-color: rgba(34, 211, 238, 0.35);
+  box-shadow: none;
+  transform: none;
+}
+
+/* Affordable: the price glows, so "you can act" is obvious at a glance. */
+.meta-row.ready .mcost {
+  color: #ffd166;
+  text-shadow: 0 0 10px rgba(255, 209, 102, 0.5);
+}
+
+.meta-row.maxed {
+  color: #4d6478;
+  cursor: default;
+  opacity: 0.65;
+}
+
+.meta-row.maxed:hover {
+  background: transparent;
+  border-color: transparent;
+  color: #4d6478;
+}
+
+.mico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+.mtext {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mname {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #cfeaf5;
+}
+
+.meta-row.maxed .mname { color: #4d6478; }
+
+.mdesc {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: #5c7a90;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mmeta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.meta-row .pips i {
+  width: 5px;
+  height: 5px;
+}
+
+.mcost {
+  min-width: 34px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: right;
+  color: #4d6478;
+}
+
+.meta-row.maxed .mcost {
+  color: #3bff9e;
+}
+
+.meta-foot {
+  margin-top: 7px;
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: #3f5566;
+  text-align: center;
+}
+
+/* Game-over variant sits further down the page, under the restart buttons. */
+.meta.meta-end {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(34, 211, 238, 0.12);
+}
+
+/* The game-over screen carries stats, a name form, the board, buttons and the
+   full meta tree, so it needs the same compaction treatment as the title. */
+@media (max-height: 900px) {
+  #gameover { gap: 9px; padding: 14px 24px; }
+  #gameover h1 { font-size: clamp(28px, 6vw, 54px); }
+  #gameover .stats { font-size: 11px; }
+  #gameover .meta.meta-end { margin-top: 10px; padding-top: 8px; }
+  #gameover .meta-list { gap: 0; }
+}
+
+.cores-earned {
+  margin-top: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #ffd166;
+  text-shadow: 0 0 14px rgba(255, 209, 102, 0.5);
+}
+
+.cores-earned.hidden { display: none; }

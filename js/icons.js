@@ -27,7 +27,11 @@
     railLance: '<path d="M2 12h18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M16 8l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="12" r="2.2" fill="currentColor"/>',
     railCharge: '<rect x="3" y="8" width="14" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19 10v4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M6 10v4M9 10v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
     pulseFlak: '<circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
-    ram: '<path d="M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 18 12 5l7 13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M9 18h6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>'
+    ram: '<path d="M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 18 12 5l7 13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M9 18h6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+
+    // ---- meta progression ----
+    core: '<path d="m12 2 8.5 5v10L12 22l-8.5-5V7L12 2Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m12 7 4 2.5v5L12 17l-4-2.5v-5L12 7Z" fill="currentColor"/>',
+    salvage: '<path d="M12 2 5 8v8l7 6 7-6V8l-7-6Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M5 8h14M12 22V8M12 8 8 2M12 8l4-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" opacity=".8"/>'
   };
 
   // Fallback so an unknown id never renders an empty box.

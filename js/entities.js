@@ -758,9 +758,9 @@
 
   // Scrap paid out for killing an enemy. Scaled off its score so tough
   // enemies are worth farming; bosses are a windfall.
-  ND.scrapValue = function (e) {
-    if (e.boss) return 120;
-    return Math.max(1, Math.round((e.score || 10) / 5));
+  ND.scrapValue = function (e, mul) {
+    const base = e.boss ? 120 : Math.max(1, Math.round((e.score || 10) / 5));
+    return Math.max(1, Math.round(base * (mul || 1)));
   };
 
   // Stacking enough points in related upgrades unlocks a set bonus. These are
@@ -919,4 +919,92 @@
     u.icon = u.id;
     ND.UPGRADE_BY_ID[u.id] = u;
   });
+
+  // =========================================================
+  // META PROGRESSION (permanent, stored locally)
+  // =========================================================
+  // These are bought with CORES between runs, so a death still pays out. They
+  // are deliberately modest: the goal is to soften bad runs, not to replace
+  // the in-run build. Each is applied once at spawn by ND.applyMeta().
+  ND.META = [
+    {
+      id: 'mHull',
+      name: 'Reinforced Hull',
+      desc: '+15 starting hull per level',
+      max: 3,
+      cost: 40,
+      color: '#22d3ee',
+      apply: (p, lvl) => { p.maxHp += 15 * lvl; p.hp = p.maxHp; }
+    },
+    {
+      id: 'mDamage',
+      name: 'Calibrated Barrels',
+      desc: '+7% weapon damage per level',
+      max: 3,
+      cost: 50,
+      color: '#ffb020',
+      apply: (p, lvl) => { p.damage *= 1 + 0.07 * lvl; }
+    },
+    {
+      id: 'mScrap',
+      name: 'Salvage Rig',
+      desc: '+12% scrap from every kill per level',
+      max: 3,
+      cost: 45,
+      color: '#3bff9e',
+      apply: (p, lvl) => { p.scrapMul = 1 + 0.12 * lvl; }
+    },
+    {
+      id: 'mDash',
+      name: 'Afterburner Coils',
+      desc: '-8% dash cooldown per level',
+      max: 3,
+      cost: 35,
+      color: '#a06bff',
+      apply: (p, lvl) => { p.dashMax *= 1 - 0.08 * lvl; }
+    },
+    {
+      id: 'mStart',
+      name: 'Scrap Stipend',
+      desc: '+18 starting scrap per level',
+      max: 3,
+      cost: 30,
+      color: '#ffd166',
+      apply: () => {} // handled by ND.metaStartScrap, applied to the run bank
+    }
+  ];
+
+  ND.META_BY_ID = {};
+  ND.META.forEach((m) => {
+    m.icon = m.id === 'mScrap' || m.id === 'mStart' ? 'salvage' : (m.id === 'mHull' ? 'hp' : m.id === 'mDamage' ? 'dmg' : m.id === 'mDash' ? 'dash' : 'core');
+    ND.META_BY_ID[m.id] = m;
+  });
+
+  // Cost of the NEXT level of a meta upgrade, given how many are already owned.
+  ND.metaCost = function (up, owned) {
+    return Math.round(up.cost * (1 + owned * 0.85) / 5) * 5;
+  };
+
+  // Cores earned for a finished run. Deliberately sublinear so a lucky deep run
+  // doesn't trivialize the tree, and always at least 1 so every run pays.
+  ND.coresForRun = function (score, wave) {
+    const s = Math.max(0, Number(score) || 0);
+    const w = Math.max(1, Number(wave) || 1);
+    return Math.max(1, Math.floor(s / 100) + Math.floor(w / 2));
+  };
+
+  // Apply every owned meta upgrade to a freshly spawned player.
+  ND.applyMeta = function (p, levels) {
+    if (!p) return;
+    p.scrapMul = 1;
+    for (const up of ND.META) {
+      const lvl = Math.max(0, Math.min(up.max, (levels && levels[up.id]) | 0));
+      if (lvl > 0 && typeof up.apply === 'function') up.apply(p, lvl);
+    }
+  };
+
+  ND.metaStartScrap = function (levels) {
+    const lvl = Math.max(0, Math.min(3, (levels && levels.mStart) | 0));
+    return lvl * 18;
+  };
 })(window.ND);

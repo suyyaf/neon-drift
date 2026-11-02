@@ -37,6 +37,17 @@
     <p class="tag">survive the grid</p>
     <p class="best" id="menuBest"></p>
     <div id="menuBoard" class="board"></div>
+
+    <!-- PERMANENT UPGRADES (bought with cores between runs) -->
+    <div id="metaPanel" class="meta">
+      <div class="meta-head">
+        <span class="meta-title">PERSISTENT SYSTEMS</span>
+        <span class="meta-cores"><b id="metaCores">0</b> CORES</span>
+      </div>
+      <div id="metaList" class="meta-list"></div>
+      <p class="meta-foot">cores are earned every run · spend them before you launch</p>
+    </div>
+
     <div class="controls">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</div>
       <div><kbd>MOUSE</kbd> aim &nbsp;·&nbsp; <kbd>HOLD LMB</kbd> fire</div>
@@ -68,6 +79,7 @@
   <div id="gameover" class="overlay hidden">
     <h1>signal lost</h1>
     <div class="stats" id="finalStats"></div>
+    <div id="coresEarned" class="cores-earned"></div>
     <div id="nameEntry" class="name-entry">
       <label for="nameInput">callsign</label>
       <input id="nameInput" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="PILOT" />
@@ -78,6 +90,14 @@
     <div class="row">
       <button id="restart" type="button">run it back</button>
       <button id="btnMenu" class="ghost" type="button">main menu</button>
+    </div>
+    <div id="metaPanelEnd" class="meta meta-end">
+      <div class="meta-head">
+        <span class="meta-title">PERSISTENT SYSTEMS</span>
+        <span class="meta-cores"><b id="metaCoresEnd">0</b> CORES</span>
+      </div>
+      <div id="metaListEnd" class="meta-list"></div>
+      <p class="meta-foot">upgrades apply to your next run</p>
     </div>
   </div>
 
