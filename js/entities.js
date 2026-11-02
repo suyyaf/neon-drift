@@ -333,7 +333,10 @@
     while (this.xp >= this.xpNext) {
       this.xp -= this.xpNext;
       this.level++;
-      this.xpNext = Math.round(this.xpNext * 1.34 + 3);
+      // 1.28 grows more gently than the old 1.34, so level-ups keep arriving
+      // roughly once or twice a wave instead of stalling at ~13 and leaving the
+      // rest of the run without power spikes.
+      this.xpNext = Math.round(this.xpNext * 1.28 + 4);
       game.pendingLevels++;
     }
   };
@@ -432,7 +435,11 @@
 
   ND.spawnEnemy = function (type, x, y, game) {
     const def = ENEMY_TYPES[type];
-    const ringMul = 1 + (game.wave - 1) * 0.13;
+    // Health scales *geometrically* (1.175x per wave). The old linear 1+0.13w
+    // curve fell behind the player's multiplicative damage upgrades: by wave 15
+    // a single bullet one-shot everything and the run stopped having a curve.
+    // Geometric keeps time-to-kill roughly flat (0.16s -> 0.08s) instead.
+    const ringMul = Math.pow(1.175, game.wave - 1);
     const e = {
       type: type,
       x: x,
@@ -442,8 +449,11 @@
       r: def.r * SHIP,
       hp: def.hp * ringMul,
       maxHp: def.hp * ringMul,
-      speed: def.speed * Math.min(1.55, 1 + (game.wave - 1) * 0.045),
-      dmg: def.dmg * Math.min(2, 1 + (game.wave - 1) * 0.06),
+      // Speed and damage used to cap out at wave ~14 and ~18 respectively, after
+      // which late waves were just more bodies at the same pressure. The caps
+      // are higher now so dodging keeps mattering deep into a run.
+      speed: def.speed * Math.min(1.85, 1 + (game.wave - 1) * 0.05),
+      dmg: def.dmg * Math.min(2.8, 1 + (game.wave - 1) * 0.075),
       xp: def.xp,
       color: def.color,
       score: def.score,
@@ -751,9 +761,13 @@
   // Cost in scrap for the next upgrade. Price scales with how many upgrades you
   // have already bought (not with that upgrade's level) so spreading thin is no
   // cheaper than going deep — farming is what actually buys power.
+  // The multiplier is 1.42 (was 1.0), because kills pay out far faster than a
+  // flat 7/level curve can absorb: a bot run banked 486 unspent scrap by wave
+  // 12, which meant the price was never actually a decision. 1.42 keeps the
+  // bank near zero without making late upgrades unaffordable.
   ND.upgradeCost = function (up, totalBought) {
     const weaponMul = up.weapon ? 1.5 : 1;
-    return Math.round((10 + totalBought * 7) * weaponMul);
+    return Math.round((10 + Math.pow(totalBought, 1.42) * 6) * weaponMul);
   };
 
   // Scrap paid out for killing an enemy. Scaled off its score so tough
@@ -858,8 +872,8 @@
   // `max` is the level cap; omitted means unlimited. `tier` drives the colour
   // accent so a maxed build reads at a glance.
   ND.UPGRADES = [
-    { id: 'dmg', name: 'Overcharge', desc: 'Bullet damage +22%', max: 8, apply: (p) => { p.damage *= 1.22; } },
-    { id: 'rate', name: 'Hyper Cycle', desc: 'Fire rate +18%', max: 8, apply: (p) => { p.fireRate *= 1.18; } },
+    { id: 'dmg', name: 'Overcharge', desc: 'Bullet damage +18%', max: 7, apply: (p) => { p.damage *= 1.18; } },
+    { id: 'rate', name: 'Hyper Cycle', desc: 'Fire rate +14%', max: 6, apply: (p) => { p.fireRate *= 1.14; } },
     { id: 'multi', name: 'Split Barrel', desc: '+1 projectile per shot', max: 5, apply: (p) => { p.bullets += 1; } },
     { id: 'speed', name: 'Afterburner', desc: 'Move speed +12%', max: 6, apply: (p) => { p.speed *= 1.12; } },
     { id: 'hp', name: 'Hull Plating', desc: 'Max HP +25 and heal 25', max: 6, apply: (p) => { p.maxHp += 25; p.hp = Math.min(p.maxHp, p.hp + 25); } },

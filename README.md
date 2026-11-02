@@ -45,6 +45,7 @@ python -m http.server 8123
 | `Space` / `Shift` | Dash (brief invulnerability) |
 | `Q` / `E` | Cycle weapon |
 | `R` | Fire a chargeable special |
+| `T` | Open the upgrade screen to spend banked scrap |
 | `M` | Mute / unmute sound |
 | `Esc` | Pause / resume |
 
@@ -52,7 +53,7 @@ The game **auto-pauses** when the window loses focus or the tab is hidden, so a
 run never continues unseen.
 
 | `1` `2` `3` | Buy an upgrade on level up |
-| `B` | Bank the level for scrap instead |
+| `B` | Bank the level for scrap instead (or close the scrap screen) |
 
 On-screen buttons: **PAUSE** / **STOP** bottom-left during a run; **RESUME** / **END RUN** on the pause screen; **RUN IT BACK** / **MAIN MENU** after death.
 
@@ -260,3 +261,44 @@ Adjust these first when balancing:
 - `js/core.js` — `ND.WORLD` arena size.
 - `js/entities.js` — `ENEMY_TYPES` (hp, speed, damage, xp) and `ND.UPGRADES`.
 - `js/main.js` — spawn cadence in `update()`, `waveDuration`, and `spawnBoss()`.
+
+### Why the curves look the way they do
+
+Enemy health scales **geometrically** (`1.175^(wave-1)`) and so does boss health.
+Player damage also compounds, so the two have to grow at comparable rates or the
+run flattens out. The old curves did not:
+
+| | Before | After |
+| --- | --- | --- |
+| Enemy health | `1 + 0.13*(wave-1)` (linear) | `1.175^(wave-1)` |
+| Boss health | `300 + 180*wave` | `420 * 1.175^(wave-1)` |
+| Overcharge | +22% × 8 | +18% × 7 |
+| Hyper Cycle | +18% × 8 | +14% × 6 |
+| Time-to-kill (wave 1 → 20) | 0.16s → 0.005s | 0.16s → 0.08s |
+
+The measured effect: a single chaser stayed killable in roughly a tenth of a
+second at wave 20 instead of dying to one frame of fire, and a wave-2 boss is a
+~4 second fight instead of a ~2 second one.
+
+Other knobs that matter:
+
+- **Spawn pressure** — `12 + 2.6*wave` enemies (capped at 64) every
+  `max(0.22, 0.62 - 0.03*wave)` seconds. The old floor of `0.1s` meant 15.5
+  spawns/sec by wave 12, which read as a wall of bodies rather than a fight.
+- **Upgrade price** — `10 + buys^1.42 * 6` (weapon upgrades ×1.5). Tuned so a
+  run is always *near* able to afford the next upgrade: a flat `7 * buys` left
+  a bot run holding 486 unspent scrap by wave 12.
+- **Offers** — each level-up deals one offence, one defence, and one utility
+  card, weighted toward your existing build. Uniformly random draws could hand
+  out 11 picks without ever showing a damage card.
+
+## Balance testing
+
+There is no test runner; balance was measured by driving the real game loop in a
+browser with a kiting bot (aim at the nearest enemy, flee when crowded, dash when
+surrounded, buy the strongest affordable card) and sampling state once a second.
+
+The bot is deliberately competent but not superhuman: it clears wave 12 while
+rarely dropping below 80 hull, which is the intended "you can go deep if you play
+well" ceiling. A human who does not kite should die much earlier.
+

@@ -21,6 +21,7 @@
     score: 0,
     time: 0,
     pendingLevels: 0,
+    freeSpend: false,
     boss: null,
     gridOffset: 0,
     killstreak: 0,
@@ -94,7 +95,9 @@
     const b = ND.spawnEnemy('tank', pt.x, pt.y, game);
     b.boss = true;
     b.r = 46 * ND.SHIP_SCALE;
-    b.maxHp = 300 + game.wave * 180;
+    // Boss health tracks the same geometric curve as regular enemies, so a boss
+    // stays a 7-10s fight instead of dying to a single volley by wave 12.
+    b.maxHp = 420 * Math.pow(1.175, game.wave - 1);
     b.hp = b.maxHp;
     b.speed = 62;
     b.dmg = 26;
@@ -424,6 +427,7 @@
     }
     updateDrone(dt);
     updateBlackHole(dt);
+    updateCamera(dt);
     if (game.novaFx) {
       game.novaFx.life -= dt;
       if (game.novaFx.life <= 0) game.novaFx = null;
@@ -458,12 +462,15 @@
     // continuous spawn pressure — escorts still trickle in during boss fights
     // so the arena never goes fully quiet, just quieter.
     game.spawnTimer -= dt;
-    const targetCount = Math.min(90, 14 + game.wave * 4);
+    // The cap used to reach 90 enemies by wave 19 and the spawn interval bottomed
+    // out at 0.1s (15.5 spawns/sec) by wave 12, which turned late waves into a
+    // wall of bodies rather than a fight. Both ramp more gently now.
+    const targetCount = Math.min(64, 12 + Math.round(game.wave * 2.6));
     const cap = game.boss ? Math.ceil(targetCount * 0.4) : targetCount;
     if (game.spawnTimer <= 0 && game.enemies.length < cap) {
-      game.spawnTimer = Math.max(0.1, 0.58 - game.wave * 0.04) * (game.boss ? 1.8 : 1);
+      game.spawnTimer = Math.max(0.22, 0.62 - game.wave * 0.03) * (game.boss ? 1.8 : 1);
       spawnWaveEnemy();
-      if (game.wave > 1 && Math.random() < 0.55) spawnWaveEnemy();
+      if (game.wave > 1 && Math.random() < 0.45) spawnWaveEnemy();
     }
 
     // enemies
@@ -675,8 +682,12 @@
 
       // XP orbs always drift toward the player, faster when close.
       // Health orbs need to be walked over, so they keep the tight magnet only.
+      // XP orbs drift strongly, but not across the entire arena: at 1200px on a
+      // 1920px-wide map every orb flew to you from anywhere, which made Tractor
+      // Field pointless and removed any reason to move toward a kill. A circle
+      // of 420 + magnet keeps orbs snappy without erasing the upgrade.
       const isOrb = pk.type === 'xp';
-      const reach = isOrb ? 1200 : p.magnet + 40;
+      const reach = isOrb ? 300 + p.magnet : p.magnet + 40;
 
       if (d < reach) {
         const pull = isOrb
@@ -1193,18 +1204,98 @@
   }
 
   // ---------------- upgrades UI ----------------
-  function openUpgrades() {
+  // `free` opens the same screen without consuming a pending level: it is the
+  // scrap-spending mode (T). Picking a card there costs scrap and returns you
+  // straight to play, and cancelling costs nothing.
+  function openSpend() {
+    if (game.state !== 'playing') return;
+    if (game.pendingLevels > 0) { openUpgrades(); return; }
+    const cheapest = ND.UPGRADES.reduce((min, u) => {
+      const lvl = game.upgradeCounts[u.id] || 0;
+      if (u.max && lvl >= u.max) return min;
+      return Math.min(min, ND.upgradeCost(u, game.buys || 0));
+    }, Infinity);
+    if (!isFinite(cheapest) || game.scrap < cheapest) {
+      toast('NEED ' + (isFinite(cheapest) ? cheapest - game.scrap : 0) + ' MORE SCRAP', '#ff3b6b', true);
+      ND.audio.play('switch');
+      return;
+    }
+    openUpgrades(true);
+  }
+
+  function closeSpend() {
+    game.state = 'playing';
+    game.freeSpend = false;
+    $('upgrade').classList.add('hidden');
+    setBuildVisible(true);
+    last = performance.now();
+    ND.mouse.down = false;
+  }
+
+  function openUpgrades(free) {
     game.state = 'upgrade';
+    game.freeSpend = !!free;
     ND.mouse.down = false;
     ND.audio.play('level');
 
+    // Weapon upgrades only make sense for the weapon you are actually holding.
+    // ND.WEAPONS order is pulse -> scatter -> rail, and `player.weapon` indexes it.
+    const currentWeapon = (ND.WEAPONS[game.player.weapon] || ND.WEAPONS[0]).id;
+    const up_locked = (u) => !!(u.weapon && u.weapon !== currentWeapon);
+
+    function weightedPick(list, weightFn) {
+      let total = 0;
+      const weights = list.map((u) => { const w = Math.max(0.01, weightFn(u)); total += w; return w; });
+      let r = Math.random() * total;
+      for (let i = 0; i < list.length; i++) {
+        r -= weights[i];
+        if (r <= 0) return list[i];
+      }
+      return list[list.length - 1];
+    }
+
     const picks = [];
     const pool = ND.UPGRADES.slice();
+
+    // Offers used to be uniformly random from all 17 upgrades, which meant a run
+    // could hand out 11 picks without ever showing a damage card. Weight the
+    // draw so the three cards usually cover different roles (offence, defence,
+    // utility) and so the player's existing build nudges what appears next.
+    const counts = game.upgradeCounts;
+    const role = (up) => {
+      if (['dmg', 'rate', 'multi', 'crit', 'pierce', 'bspeed'].includes(up.id)) return 'off';
+      if (['hp', 'regen', 'lifesteal', 'dash', 'ram'].includes(up.id)) return 'def';
+      return 'util';
+    };
+    const weightOf = (up) => {
+      let w = 1;
+      const owned = counts[up.id] || 0;
+      if (owned > 0) w += 0.6;                       // lean into the current build
+      if (role(up) === 'off' && !counts.dmg) w += 1.4; // never starve a new run
+      return w;
+    };
+
+    // Draw one candidate per role first (deduped), then fill any gaps so the
+    // three cards are never three copies of the same role.
+    const roles = ['off', 'def', 'util'];
+    for (const r of roles) {
+      if (picks.length >= 3) break;
+      const candidates = pool.filter((u) => {
+        const lvl = counts[u.id] || 0;
+        if (u.max && lvl >= u.max) return false;
+        if (up_locked(u)) return false;
+        return role(u) === r;
+      });
+      if (!candidates.length) continue;
+      const up = weightedPick(candidates, weightOf);
+      picks.push(up);
+      pool.splice(pool.indexOf(up), 1);
+    }
     while (picks.length < 3 && pool.length) {
       const idx = ND.randInt(0, pool.length - 1);
       const up = pool.splice(idx, 1)[0];
-      const lvl = game.upgradeCounts[up.id] || 0;
-      if (up.max && lvl >= up.max) continue;
+      const lvl = counts[up.id] || 0;
+      if ((up.max && lvl >= up.max) || up_locked(up)) continue;
       picks.push(up);
     }
 
@@ -1231,26 +1322,28 @@
 
       el.innerHTML =
         '<span class="key">' + (i + 1) + '</span>' +
-        '<div class="glyph">' + ND.iconSvg(up.icon, 26) + '</div>' +
+        '<div class="glyph">' + ND.iconSvg(up.icon, 30) + '</div>' +
         (up.weapon ? '<span class="wtag">' + up.weapon.toUpperCase() + '</span>' : '') +
-        '<h3>' + up.name + '</h3>' +
-        '<p>' + up.desc + '</p>' +
-        '<div class="lvrow">' +
-          '<span class="lvlabel">' + (lvl === 0 ? 'NEW' : 'LV ' + lvl + ' → ' + nextLvl) + '</span>' +
-          renderPips(lvl, up.max) +
-          (maxed ? '<span class="maxtag">MAX</span>' : '') +
+        '<div class="cardbody">' +
+          '<h3>' + up.name + '</h3>' +
+          '<p>' + up.desc + '</p>' +
+          '<div class="lvrow">' +
+            '<span class="lvlabel">' + (lvl === 0 ? 'NEW' : 'LV ' + lvl + ' → ' + nextLvl) + '</span>' +
+            renderPips(lvl, up.max) +
+            (maxed ? '<span class="maxtag">MAX</span>' : '') +
+          '</div>' +
+          '<div class="synwrap">' + unlocked.map((s) =>
+            '<div class="synline" style="color:' + s.color + '">' +
+              '<span class="bdot" style="background:' + s.color + ';box-shadow:0 0 7px ' + s.color + '"></span>' +
+              'UNLOCKS ' + s.name +
+            '</div>'
+          ).join('') + '</div>' +
         '</div>' +
         '<div class="costrow' + (afford ? '' : ' short') + '">' +
           '<span class="cost">' + cost + '</span>' +
           '<span class="costunit">SCRAP</span>' +
           (afford ? '' : '<span class="costmiss">need ' + (cost - game.scrap) + '</span>') +
-        '</div>' +
-        '<div class="synwrap">' + unlocked.map((s) =>
-          '<div class="synline" style="color:' + s.color + '">' +
-            '<span class="bdot" style="background:' + s.color + ';box-shadow:0 0 7px ' + s.color + '"></span>' +
-            'UNLOCKS ' + s.name +
-          '</div>'
-        ).join('') + '</div>';
+        '</div>';
       el.addEventListener('click', () => chooseUpgrade(up));
       container.appendChild(el);
     });
@@ -1260,6 +1353,15 @@
     if (bank) bank.innerHTML = '<span class="sbnum">' + game.scrap + '</span> SCRAP';
 
     game.currentPicks = picks;
+    // The overlay header and its button reflect which mode we are in: a real
+    // level-up, or a free scrap purchase.
+    const title = $('upgrade').querySelector('h2');
+    const sub = $('upgrade').querySelector('p');
+    const skip = $('btnSkip');
+    if (title) title.textContent = free ? 'spend scrap' : 'level up';
+    if (sub) sub.textContent = free ? 'buy an upgrade with banked scrap' : 'spend scrap on an upgrade';
+    if (skip) skip.textContent = free ? 'back to the fight' : 'bank the level';
+
     // The upgrade overlay is full-width; the tracker would sit on top of the
     // third card, so it steps aside until the pick is made.
     setBuildVisible(false);
@@ -1483,14 +1585,25 @@
     }
 
     renderBuild();
-    game.pendingLevels--;
     $('upgrade').classList.add('hidden');
 
-    if (game.pendingLevels > 0) {
-      // If the next pick is unaffordable too, hold the level in the bank
-      // instead of reopening a screen the player can't act on.
+    // Capture the mode *before* clearing it, so a scrap-spend purchase never
+    // consumes a pending level and a level-up never leaks the flag.
+    const wasFree = !!game.freeSpend;
+    game.freeSpend = false;
+
+    if (wasFree) {
+      // Scrap-spend mode: buying one thing returns you to play, and can be
+      // reopened immediately with T if there is still more to buy.
+      game.state = 'playing';
+      setBuildVisible(true);
+      last = performance.now();
+      ND.mouse.down = false;
+    } else if (game.pendingLevels > 1) {
+      game.pendingLevels--;
       openUpgrades();
     } else {
+      game.pendingLevels = 0;
       game.state = 'playing';
       setBuildVisible(true);
       last = performance.now();
@@ -1501,7 +1614,15 @@
   // Bank the pending level without buying: the level-up is refunded as scrap
   // so an unaffordable screen never becomes a dead end.
   function bankLevel() {
-    if (game.state !== 'upgrade' || game.pendingLevels <= 0) return;
+    if (game.state !== 'upgrade') return;
+
+    // In scrap-spend mode there is no level to bank; B just closes the screen.
+    if (game.freeSpend) {
+      closeSpend();
+      return;
+    }
+    if (game.pendingLevels <= 0) return;
+
     const refund = 6 + game.wave * 2;
     game.scrap += refund;
     game.pendingLevels--;
@@ -1533,6 +1654,12 @@
     if (game.state === 'playing' && (e.key === 'r' || e.key === 'R')) {
       useSpecial();
     }
+    // Spend scrap without waiting for a level-up. Level-ups slowed to one per
+    // several waves late in a run, which left hundreds of scrap stranded; the
+    // scrap bank is meant to be the real currency, so it gets its own key.
+    if (game.state === 'playing' && (e.key === 't' || e.key === 'T')) {
+      openSpend();
+    }
     if (game.state === 'playing' && (e.key === 'q' || e.key === 'Q')) {
       game.player.cycleWeapon(-1);
     }
@@ -1542,6 +1669,7 @@
     if (e.key === 'Escape') {
       if (game.state === 'playing') pauseGame();
       else if (game.state === 'paused') resumeGame();
+      else if (game.state === 'upgrade' && game.freeSpend) closeSpend();
     }
   });
 
@@ -1760,6 +1888,7 @@
     game.score = 0;
     game.time = 0;
     game.pendingLevels = 0;
+    game.freeSpend = false;
     game.boss = null;
     game.killstreak = 0;
     game.streakTimer = 0;
@@ -1845,6 +1974,7 @@
     game.pickups.length = 0;
     game.texts.length = 0;
     game.pendingLevels = 0;
+    game.freeSpend = false;
     game.boss = null;
     game.blackHole = null;
     game.novaFx = null;
