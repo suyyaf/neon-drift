@@ -122,7 +122,6 @@
   function damageEnemy(e, dmg, crit) {
     e.hp -= dmg;
     e.flash = 1;
-    e.knockX += 0;
     if (e.hp <= 0) {
       killEnemy(e);
     } else {
@@ -313,6 +312,9 @@
 
       if (e.ramCd > 0) e.ramCd -= dt;
     }
+
+    // Keep the swarm from collapsing into a single stack.
+    ND.separateEnemies(game.enemies);
 
     // boss extra behavior: radial burst
     if (game.boss) {
@@ -789,7 +791,6 @@
   }
 
   // ---------------- upgrades UI ----------------
-  const UPGRADE_LIMIT = {};
   function openUpgrades() {
     game.state = 'upgrade';
     ND.mouse.down = false;
@@ -1017,7 +1018,6 @@
     ND.audio.init();
     reset();
     game.state = 'playing';
-    game.lastShot = 0;
     hideAllOverlays();
     $('hudbar').classList.remove('hidden');
     toast('WAVE 1 // ENGAGE', '#22d3ee');
@@ -1145,6 +1145,11 @@
 
     showMenuBest();
   }
+
+  // Auto-pause when the game loses focus so a run cannot continue unseen.
+  ND.onBlur = function () {
+    if (game.state === 'playing') pauseGame();
+  };
 
   // ---------------- UI wiring ----------------
   $('play').addEventListener('click', startGame);

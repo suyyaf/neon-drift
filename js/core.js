@@ -55,14 +55,34 @@ window.ND = window.ND || {};
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) ND.mouse.down = false;
   });
+  // If the pointer leaves the page mid-hold, drop the trigger instead of
+  // firing forever until the player clicks again.
+  window.addEventListener('mouseleave', () => {
+    ND.mouse.down = false;
+  });
   window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Losing focus (alt-tab, clicking another window) must pause, not keep
+  // simulating in the background where the player can die unseen.
   window.addEventListener('blur', () => {
     ND.keys.clear();
     ND.mouse.down = false;
+    if (ND.onBlur) ND.onBlur();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      ND.keys.clear();
+      ND.mouse.down = false;
+      if (ND.onBlur) ND.onBlur();
+    }
   });
 
   // ---------- particles ----------
   ND.particles = [];
+  // Hard cap: beyond this the frame cost explodes and the screen is unreadable
+  // anyway. Oldest particles are recycled rather than grown indefinitely.
+  const MAX_PARTICLES = 900;
 
   ND.spawnParticles = function (x, y, count, opts) {
     opts = opts || {};
@@ -72,6 +92,11 @@ window.ND = window.ND || {};
     const life = opts.life || 0.5;
     const dir = opts.dir;
     const spread = opts.spread === undefined ? Math.PI * 2 : opts.spread;
+
+    // Degrade gracefully when saturated: keep the newest effects readable.
+    const room = MAX_PARTICLES - ND.particles.length;
+    if (room <= 0) return;
+    if (count > room) count = room;
 
     for (let i = 0; i < count; i++) {
       const a = dir !== undefined ? dir + ND.rand(-spread / 2, spread / 2) : ND.rand(0, ND.TAU);
@@ -93,11 +118,13 @@ window.ND = window.ND || {};
 
   ND.updateParticles = function (dt) {
     const arr = ND.particles;
+    // Swap-with-last removal avoids splice() shifting the whole array.
     for (let i = arr.length - 1; i >= 0; i--) {
       const p = arr[i];
       p.life -= dt;
       if (p.life <= 0) {
-        arr.splice(i, 1);
+        arr[i] = arr[arr.length - 1];
+        arr.pop();
         continue;
       }
       const d = Math.max(0, 1 - p.drag * dt);
@@ -110,18 +137,33 @@ window.ND = window.ND || {};
 
   ND.drawParticles = function (ctx, camX, camY) {
     const arr = ND.particles;
+    // Batch by colour: consecutive same-colour particles share one shadowBlur
+    // setting, which is by far the most expensive part of drawing them.
+    let curColor = null;
+    let curGlow = false;
+
     for (let i = 0; i < arr.length; i++) {
       const p = arr[i];
-      const t = Math.max(0, p.life / p.maxLife);
-      ctx.globalAlpha = t;
-      ctx.fillStyle = p.color;
-      if (p.glow) {
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 10;
+      const t = p.life / p.maxLife;
+      if (t <= 0) continue;
+
+      if (p.color !== curColor || p.glow !== curGlow) {
+        if (p.glow) {
+          ctx.shadowColor = p.color;
+          ctx.shadowBlur = 10;
+        } else {
+          ctx.shadowBlur = 0;
+        }
+        ctx.fillStyle = p.color;
+        curColor = p.color;
+        curGlow = p.glow;
       }
+
+      ctx.globalAlpha = t > 1 ? 1 : t;
       const s = p.size * (0.4 + t * 0.9);
       ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
     }
+
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
   };

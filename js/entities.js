@@ -465,9 +465,80 @@
     e.knockX *= Math.max(0, 1 - 9 * dt);
     e.knockY *= Math.max(0, 1 - 9 * dt);
 
-    // separation (cheap, avoids stacking)
     e.x = ND.clamp(e.x, e.r, ND.WORLD.w - e.r);
     e.y = ND.clamp(e.y, e.r, ND.WORLD.h - e.r);
+  };
+
+  // Push overlapping enemies apart so a wave reads as a swarm, not one blob.
+  // Uses a uniform spatial grid so this stays cheap with many enemies.
+  ND.separateEnemies = function (enemies) {
+    const CELL = 64;
+    const cols = Math.ceil(ND.WORLD.w / CELL) + 1;
+    const rows = Math.ceil(ND.WORLD.h / CELL) + 1;
+    const grid = new Map();
+
+    const key = (cx, cy) => cx + ',' + cy;
+
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      const cx = (e.x / CELL) | 0;
+      const cy = (e.y / CELL) | 0;
+      const k = key(cx, cy);
+      let bucket = grid.get(k);
+      if (!bucket) { bucket = []; grid.set(k, bucket); }
+      bucket.push(e);
+    }
+
+    const touched = new Set();
+
+    for (let i = 0; i < enemies.length; i++) {
+      const a = enemies[i];
+      const cx = (a.x / CELL) | 0;
+      const cy = (a.y / CELL) | 0;
+
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          const bucket = grid.get(key(cx + ox, cy + oy));
+          if (!bucket) continue;
+
+          for (let j = 0; j < bucket.length; j++) {
+            const b = bucket[j];
+            if (b === a) continue;
+
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            const minD = a.r + b.r;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= minD * minD || d2 === 0) continue;
+
+            const d = Math.sqrt(d2);
+            const overlap = (minD - d) * 0.5;
+            dx /= d; dy /= d;
+
+            // Split the correction so both parties move, biased by mass.
+            const total = a.r + b.r;
+            const aShare = b.r / total;
+            const bShare = a.r / total;
+
+            a.x -= dx * overlap * aShare;
+            a.y -= dy * overlap * aShare;
+            b.x += dx * overlap * bShare;
+            b.y += dy * overlap * bShare;
+
+            touched.add(a);
+            touched.add(b);
+          }
+        }
+      }
+    }
+
+    // Keep everyone inside the arena after being nudged.
+    if (touched.size) {
+      touched.forEach((e) => {
+        e.x = ND.clamp(e.x, e.r, ND.WORLD.w - e.r);
+        e.y = ND.clamp(e.y, e.r, ND.WORLD.h - e.r);
+      });
+    }
   };
 
   ND.drawEnemy = function (ctx, e) {
