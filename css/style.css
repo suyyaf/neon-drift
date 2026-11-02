@@ -1,0 +1,304 @@
+/* NEON DRIFT — all visuals are canvas-driven except the menus. */
+
+:root {
+  --cyan: #22d3ee;
+  --pink: #ff3b6b;
+  --violet: #a06bff;
+  --ink: #05060a;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+  color: #e6f7ff;
+  font-family: var(--mono);
+  cursor: crosshair;
+  user-select: none;
+}
+
+canvas { display: block; }
+
+/* Subtle scanlines for the CRT feel. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.035) 0px,
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.6;
+}
+
+/* ---------- Overlays ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 45%, rgba(10, 16, 30, 0.75), rgba(3, 5, 10, 0.94));
+  backdrop-filter: blur(7px);
+  animation: fade 0.18s ease-out;
+}
+
+.overlay.hidden { display: none; }
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+h1, h2 {
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+
+h1 {
+  font-size: clamp(38px, 9vw, 84px);
+  color: #fff;
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.75), 0 0 60px rgba(34, 211, 238, 0.35);
+}
+
+h2 { font-size: clamp(24px, 5vw, 40px); color: var(--cyan); text-shadow: 0 0 22px rgba(34, 211, 238, 0.6); }
+
+#gameover h1 {
+  color: #ffe4ec;
+  text-shadow: 0 0 18px rgba(255, 59, 107, 0.8), 0 0 70px rgba(255, 59, 107, 0.4);
+}
+
+p { margin: 0; color: #8ea6bb; letter-spacing: 0.16em; font-size: 13px; text-transform: uppercase; }
+
+.tag {
+  color: var(--cyan);
+  letter-spacing: 0.5em;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+/* ---------- Buttons ---------- */
+
+button {
+  margin-top: 10px;
+  padding: 15px 34px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #04121a;
+  background: linear-gradient(180deg, #8ef0ff, var(--cyan));
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(180, 250, 255, 0.8), 0 0 26px rgba(34, 211, 238, 0.45);
+  transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.12);
+  box-shadow: 0 0 0 1px #d9feff, 0 0 44px rgba(34, 211, 238, 0.8);
+}
+
+button:active { transform: translateY(0) scale(0.98); }
+
+/* ---------- Controls legend ---------- */
+
+.controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: #7f97ab;
+  text-transform: uppercase;
+}
+
+.controls div { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+
+kbd {
+  display: inline-block;
+  min-width: 26px;
+  padding: 4px 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cyan);
+  background: rgba(34, 211, 238, 0.07);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* ---------- Upgrade cards ---------- */
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 8px;
+  max-width: 900px;
+}
+
+.card {
+  position: relative;
+  width: 210px;
+  padding: 22px 18px 18px;
+  text-align: left;
+  background: linear-gradient(160deg, rgba(18, 30, 48, 0.95), rgba(8, 12, 22, 0.95));
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.2s, box-shadow 0.2s;
+  animation: rise 0.22s ease-out backwards;
+}
+
+.card:nth-child(2) { animation-delay: 0.06s; }
+.card:nth-child(3) { animation-delay: 0.12s; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+.card:hover {
+  transform: translateY(-6px);
+  border-color: var(--cyan);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 26px rgba(34, 211, 238, 0.35);
+}
+
+.card .key {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 10px;
+  color: #4d6478;
+  letter-spacing: 0.1em;
+}
+
+.card h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: #fff;
+  text-transform: uppercase;
+}
+
+.card p {
+  font-size: 11.5px;
+  line-height: 1.55;
+  letter-spacing: 0.06em;
+  color: #93aec2;
+  text-transform: none;
+}
+
+.card .glyph {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 14px;
+  border: 2px solid var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.5), inset 0 0 12px rgba(34, 211, 238, 0.3);
+}
+
+.stats {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  color: #9fb8cc;
+}
+
+.stats b { color: #fff; }
+
+/* ---------- In-game control bar ---------- */
+
+.hudbar {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+}
+
+.hudbar.hidden { display: none; }
+
+.chip {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  color: #9fc4d4;
+  background: rgba(8, 16, 26, 0.8);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 3px;
+  box-shadow: none;
+  backdrop-filter: blur(6px);
+}
+
+.chip:hover {
+  transform: none;
+  color: #d9feff;
+  background: rgba(16, 38, 54, 0.92);
+  border-color: rgba(34, 211, 238, 0.75);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.28);
+}
+
+.chip.danger {
+  color: #ff9db4;
+  border-color: rgba(255, 59, 107, 0.35);
+}
+
+.chip.danger:hover {
+  color: #fff;
+  background: rgba(60, 10, 24, 0.92);
+  border-color: #ff3b6b;
+  box-shadow: 0 0 18px rgba(255, 59, 107, 0.4);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+/* Secondary/destructive action beside the main button. */
+button.ghost {
+  color: #9fc4d4;
+  background: transparent;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  box-shadow: none;
+}
+
+button.ghost:hover {
+  color: #fff;
+  background: rgba(34, 211, 238, 0.08);
+  border-color: var(--cyan);
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.3);
+}
