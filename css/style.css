@@ -262,13 +262,15 @@ kbd {
 }
 
 /* The icon sits in a framed window at the top of the card, like card art. */
+/* Art window: a fixed band so every card keeps the same silhouette. The
+   leftover space in short cards is absorbed by .synwrap below, not here. */
 .card .glyph {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 96px;
+  height: 118px;
   margin: 0;
   color: var(--cyan);
   border: 0;
@@ -599,6 +601,7 @@ kbd {
    card happens to unlock a synergy. */
 .synwrap {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   justify-content: flex-end;
   min-height: 34px;
