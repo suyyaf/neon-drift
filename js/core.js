@@ -9,7 +9,7 @@ window.ND = window.ND || {};
   ND.canvas = canvas;
   ND.ctx = ctx;
   ND.view = { w: 0, h: 0, dpr: 1 };
-  ND.WORLD = { w: 2000, h: 1500 };
+  ND.WORLD = { w: 1920, h: 1440 };
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -33,6 +33,34 @@ window.ND = window.ND || {};
   ND.clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   ND.lerp = (a, b, t) => a + (b - a) * t;
   ND.dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+
+  // ---------- toroidal (wrap-around) space ----------
+  // The arena is a torus: leaving one edge brings you in the opposite one.
+  // Distance and direction take the SHORT way round, so an enemy at x=10 still
+  // chases a player at x=1990 across the seam instead of walking the map.
+  ND.wrapX = (x) => {
+    const w = ND.WORLD.w;
+    return ((x % w) + w) % w;
+  };
+  ND.wrapY = (y) => {
+    const h = ND.WORLD.h;
+    return ((y % h) + h) % h;
+  };
+  ND.wrap = (o) => { o.x = ND.wrapX(o.x); o.y = ND.wrapY(o.y); return o; };
+
+  // Shortest signed delta from a to b on an axis of length n.
+  ND.delta = (a, b, n) => {
+    let d = b - a;
+    if (d > n / 2) d -= n;
+    else if (d < -n / 2) d += n;
+    return d;
+  };
+
+  ND.distT = (ax, ay, bx, by) => Math.hypot(
+    ND.delta(ax, bx, ND.WORLD.w),
+    ND.delta(ay, by, ND.WORLD.h)
+  );
+
 
   // ---------- input ----------
   ND.keys = new Set();
@@ -135,8 +163,13 @@ window.ND = window.ND || {};
     }
   };
 
-  ND.drawParticles = function (ctx, camX, camY) {
+  ND.drawParticles = function (ctx, camX, camY, tilesX, tilesY) {
     const arr = ND.particles;
+    const txs = tilesX || [0];
+    const tys = tilesY || [0];
+    const x0 = camX - 40, x1 = camX + ND.view.w + 40;
+    const y0 = camY - 40, y1 = camY + ND.view.h + 40;
+    const multi = txs.length > 1 || tys.length > 1;
     // Batch by colour: consecutive same-colour particles share one shadowBlur
     // setting, which is by far the most expensive part of drawing them.
     let curColor = null;
@@ -146,6 +179,8 @@ window.ND = window.ND || {};
       const p = arr[i];
       const t = p.life / p.maxLife;
       if (t <= 0) continue;
+
+      if (!multi && (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1)) continue;
 
       if (p.color !== curColor || p.glow !== curGlow) {
         if (p.glow) {
@@ -161,7 +196,22 @@ window.ND = window.ND || {};
 
       ctx.globalAlpha = t > 1 ? 1 : t;
       const s = p.size * (0.4 + t * 0.9);
-      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+
+      if (!multi) {
+        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+        continue;
+      }
+
+      // Near a seam the same particle can appear on both sides of the screen.
+      for (let a = 0; a < txs.length; a++) {
+        const px = p.x + txs[a];
+        if (px < x0 || px > x1) continue;
+        for (let b = 0; b < tys.length; b++) {
+          const py = p.y + tys[b];
+          if (py < y0 || py > y1) continue;
+          ctx.fillRect(px - s / 2, py - s / 2, s, s);
+        }
+      }
     }
 
     ctx.globalAlpha = 1;

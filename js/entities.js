@@ -146,13 +146,18 @@
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    this.x = ND.clamp(this.x, this.r, ND.WORLD.w - this.r);
-    this.y = ND.clamp(this.y, this.r, ND.WORLD.h - this.r);
+    // The arena is a torus: slip out one edge, come back in the other.
+    this.x = ND.wrapX(this.x);
+    this.y = ND.wrapY(this.y);
 
-    // aim at mouse in world space
-    const mx = ND.mouse.x + game.camX;
-    const my = ND.mouse.y + game.camY;
-    this.angle = Math.atan2(my - this.y, mx - this.x);
+    // Aim at the mouse in world space. The mouse may sit past a seam (the
+    // camera wraps), so take the short way round instead of a full-map angle.
+    const mx = ND.wrapX(ND.mouse.x + game.camX);
+    const my = ND.wrapY(ND.mouse.y + game.camY);
+    this.angle = Math.atan2(
+      ND.delta(this.y, my, ND.WORLD.h),
+      ND.delta(this.x, mx, ND.WORLD.w)
+    );
 
     // shooting
     this.cooldown -= dt;
@@ -465,8 +470,8 @@
     e.flash = Math.max(0, e.flash - dt * 6);
     e.angle += e.spin * dt;
 
-    let dx = p.x - e.x;
-    let dy = p.y - e.y;
+    let dx = ND.delta(e.x, p.x, ND.WORLD.w);
+    let dy = ND.delta(e.y, p.y, ND.WORLD.h);
     const d = Math.hypot(dx, dy) || 1;
     dx /= d; dy /= d;
 
@@ -487,7 +492,10 @@
       e.fireCd -= dt;
       if (e.fireCd <= 0 && d < 700) {
         e.fireCd = ND.rand(1.4, 2.3);
-        const a = Math.atan2(p.y - e.y, p.x - e.x);
+        const a = Math.atan2(
+          ND.delta(e.y, p.y, ND.WORLD.h),
+          ND.delta(e.x, p.x, ND.WORLD.w)
+        );
         game.bullets.push({
           hostile: true,
           x: e.x, y: e.y,
@@ -513,8 +521,8 @@
     e.knockX *= Math.max(0, 1 - 9 * dt);
     e.knockY *= Math.max(0, 1 - 9 * dt);
 
-    e.x = ND.clamp(e.x, e.r, ND.WORLD.w - e.r);
-    e.y = ND.clamp(e.y, e.r, ND.WORLD.h - e.r);
+    e.x = ND.wrapX(e.x);
+    e.y = ND.wrapY(e.y);
   };
 
   // Push overlapping enemies apart so a wave reads as a swarm, not one blob.
@@ -546,15 +554,19 @@
 
       for (let ox = -1; ox <= 1; ox++) {
         for (let oy = -1; oy <= 1; oy++) {
-          const bucket = grid.get(key(cx + ox, cy + oy));
+          // Wrap the neighbour lookup so enemies on opposite sides of a seam
+          // still push each other apart.
+          const nx = (cx + ox + cols) % cols;
+          const ny = (cy + oy + rows) % rows;
+          const bucket = grid.get(key(nx, ny));
           if (!bucket) continue;
 
           for (let j = 0; j < bucket.length; j++) {
             const b = bucket[j];
             if (b === a) continue;
 
-            let dx = b.x - a.x;
-            let dy = b.y - a.y;
+            let dx = ND.delta(a.x, b.x, ND.WORLD.w);
+            let dy = ND.delta(a.y, b.y, ND.WORLD.h);
             const minD = a.r + b.r;
             const d2 = dx * dx + dy * dy;
             if (d2 >= minD * minD || d2 === 0) continue;
@@ -580,11 +592,11 @@
       }
     }
 
-    // Keep everyone inside the arena after being nudged.
+    // Keep everyone in-bounds after being nudged (wrapping, not clamping).
     if (touched.size) {
       touched.forEach((e) => {
-        e.x = ND.clamp(e.x, e.r, ND.WORLD.w - e.r);
-        e.y = ND.clamp(e.y, e.r, ND.WORLD.h - e.r);
+        e.x = ND.wrapX(e.x);
+        e.y = ND.wrapY(e.y);
       });
     }
   };
@@ -672,7 +684,7 @@
         ND.audio.play('explode');
         game.novaFx = { x: p.x, y: p.y, r: 0, max: R, life: 0.5 };
         for (const e of game.enemies.slice()) {
-          const d = ND.dist(p.x, p.y, e.x, e.y);
+          const d = ND.distT(p.x, p.y, e.x, e.y);
           if (d < R + e.r) ND.damageEnemy(e, p.damage * 4.5, false);
         }
       }
@@ -718,10 +730,10 @@
         // Aim at the densest nearby cluster.
         let best = null, bestScore = -1;
         for (const e of game.enemies) {
-          if (ND.dist(p.x, p.y, e.x, e.y) > 620) continue;
+          if (ND.distT(p.x, p.y, e.x, e.y) > 620) continue;
           let s = 0;
           for (const o of game.enemies) {
-            if (ND.dist(e.x, e.y, o.x, o.y) < 170) s++;
+            if (ND.distT(e.x, e.y, o.x, o.y) < 170) s++;
           }
           if (s > bestScore) { bestScore = s; best = e; }
         }

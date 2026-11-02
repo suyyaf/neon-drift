@@ -29,18 +29,20 @@
   ND.game = game;
 
   // ---------------- camera ----------------
+  // The world wraps, so the camera wraps too — it is never clamped, and the
+  // lerp is done in toroidal space so crossing the seam doesn't whip across
+  // the whole map.
   function updateCamera(dt) {
     const p = game.player;
     if (!p) return;
     const targetX = p.x + (p.vx || 0) * 0.22 - ND.view.w / 2;
     const targetY = p.y + (p.vy || 0) * 0.22 - ND.view.h / 2;
     const smooth = 1 - Math.pow(0.001, dt);
-    game.camX = ND.lerp(game.camX, targetX, smooth);
-    game.camY = ND.lerp(game.camY, targetY, smooth);
-    game.camX = ND.clamp(game.camX, 0, Math.max(0, ND.WORLD.w - ND.view.w));
-    game.camY = ND.clamp(game.camY, 0, Math.max(0, ND.WORLD.h - ND.view.h));
-    if (ND.WORLD.w < ND.view.w) game.camX = (ND.WORLD.w - ND.view.w) / 2;
-    if (ND.WORLD.h < ND.view.h) game.camY = (ND.WORLD.h - ND.view.h) / 2;
+
+    game.camX += ND.delta(game.camX, targetX, ND.WORLD.w) * smooth;
+    game.camY += ND.delta(game.camY, targetY, ND.WORLD.h) * smooth;
+    game.camX = ND.wrapX(game.camX);
+    game.camY = ND.wrapY(game.camY);
   }
 
   // ---------------- spawning ----------------
@@ -60,13 +62,13 @@
       else if (side === 2) { x = vx - pad; y = vy + ND.rand(0, vh); }
       else { x = vx + vw + pad; y = vy + ND.rand(0, vh); }
 
-      x = ND.clamp(x, 30, ND.WORLD.w - 30);
-      y = ND.clamp(y, 30, ND.WORLD.h - 30);
+      x = ND.wrapX(x);
+      y = ND.wrapY(y);
 
-      const d = ND.dist(x, y, p.x, p.y);
+      const d = ND.distT(x, y, p.x, p.y);
       if (d > bestD) { bestD = d; best = { x, y }; }
       tries++;
-    } while (ND.dist(x, y, p.x, p.y) < 260 && tries < 20);
+    } while (ND.distT(x, y, p.x, p.y) < 260 && tries < 20);
 
     return best || { x, y };
   }
@@ -205,13 +207,16 @@
 
     let target = null, bd = 560;
     for (const e of game.enemies) {
-      const d = ND.dist(dx, dy, e.x, e.y);
+      const d = ND.distT(dx, dy, e.x, e.y);
       if (d < bd) { bd = d; target = e; }
     }
     if (!target) return;
 
     p.droneCd = 0.42;
-    const a = Math.atan2(target.y - dy, target.x - dx);
+    const a = Math.atan2(
+      ND.delta(dy, target.y, ND.WORLD.h),
+      ND.delta(dx, target.x, ND.WORLD.w)
+    );
     game.bullets.push({
       x: dx, y: dy,
       vx: Math.cos(a) * 820, vy: Math.sin(a) * 820,
@@ -231,7 +236,8 @@
     bh.life -= dt;
 
     for (const e of game.enemies) {
-      const dx = bh.x - e.x, dy = bh.y - e.y;
+      const dx = ND.delta(e.x, bh.x, ND.WORLD.w);
+      const dy = ND.delta(e.y, bh.y, ND.WORLD.h);
       const d = Math.hypot(dx, dy) || 1;
       if (d > 420) continue;
       const pull = (1 - d / 420) * 900;
@@ -251,7 +257,7 @@
       ND.addShake(20);
       ND.audio.play('explode');
       for (const e of game.enemies.slice()) {
-        if (ND.dist(bh.x, bh.y, e.x, e.y) < 200 + e.r) {
+        if (ND.distT(bh.x, bh.y, e.x, e.y) < 200 + e.r) {
           ND.damageEnemy(e, game.player.damage * 6, false);
         }
       }
@@ -298,7 +304,7 @@
     for (let i = game.enemies.length - 1; i >= 0; i--) {
       const o = game.enemies[i];
       if (o === e) continue;
-      if (ND.dist(o.x, o.y, e.x, e.y) > radius + o.r) continue;
+      if (ND.distT(o.x, o.y, e.x, e.y) > radius + o.r) continue;
       damageEnemy(o, dmg * 0.55, false);
     }
   }
@@ -429,14 +435,17 @@
     // waves
     game.waveTimer += dt;
     const waveDuration = Math.max(14, 26 - game.wave * 0.8);
-    if (game.waveTimer >= waveDuration && !game.boss) {
+    // The wave clock keeps running during a boss fight. Freezing it here meant
+    // a second boss at wave 3 could never arrive, so a run stalled forever.
+    if (game.waveTimer >= waveDuration) {
       game.waveTimer = 0;
       game.wave++;
-      // First boss lands at wave 2 so the opening has a spike, then every 3rd.
+      // First boss lands at wave 2 so the opening has a spike, then every 3rd
+      // wave after that (3, 6, 9...). A boss already alive skips the summon.
       const isBossWave = game.wave === 2 || game.wave % 3 === 0;
-      if (isBossWave) {
+      if (isBossWave && !game.boss) {
         spawnBoss();
-      } else {
+      } else if (!game.boss) {
         toast('WAVE ' + game.wave, '#22d3ee');
         ND.audio.play('level');
         ND.music.play('track');
@@ -445,11 +454,13 @@
       }
     }
 
-    // continuous spawn pressure
+    // continuous spawn pressure — escorts still trickle in during boss fights
+    // so the arena never goes fully quiet, just quieter.
     game.spawnTimer -= dt;
     const targetCount = Math.min(90, 14 + game.wave * 4);
-    if (game.spawnTimer <= 0 && game.enemies.length < targetCount && !game.boss) {
-      game.spawnTimer = Math.max(0.1, 0.58 - game.wave * 0.04);
+    const cap = game.boss ? Math.ceil(targetCount * 0.4) : targetCount;
+    if (game.spawnTimer <= 0 && game.enemies.length < cap) {
+      game.spawnTimer = Math.max(0.1, 0.58 - game.wave * 0.04) * (game.boss ? 1.8 : 1);
       spawnWaveEnemy();
       if (game.wave > 1 && Math.random() < 0.55) spawnWaveEnemy();
     }
@@ -570,11 +581,15 @@
       b.y += b.vy * dt;
       b.life -= dt;
 
-      let dead = b.life <= 0 ||
-        b.x < -60 || b.y < -60 || b.x > ND.WORLD.w + 60 || b.y > ND.WORLD.h + 60;
+      // Rounds live on the torus too, so they wrap rather than vanish. Range
+      // is enforced by `life`, not by the world edge.
+      b.x = ND.wrapX(b.x);
+      b.y = ND.wrapY(b.y);
+
+      let dead = b.life <= 0;
 
       if (!dead && b.hostile) {
-        if (ND.dist(b.x, b.y, p.x, p.y) < p.r + b.r) {
+        if (ND.distT(b.x, b.y, p.x, p.y) < p.r + b.r) {
           p.hurt(b.dmg);
           dead = true;
         }
@@ -582,7 +597,7 @@
         for (let j = game.enemies.length - 1; j >= 0; j--) {
           const e = game.enemies[j];
           if (b.hits.indexOf(e) !== -1) continue;
-          if (ND.dist(b.x, b.y, e.x, e.y) < e.r + b.r) {
+          if (ND.distT(b.x, b.y, e.x, e.y) < e.r + b.r) {
             damageEnemy(e, b.dmg, b.crit);
 
             // Synergies: burn on hit, and a crit shockwave.
@@ -645,7 +660,7 @@
         }
       }
 
-      if (ND.dist(b.x, b.y, p.x, p.y) < 260) b.glow = true;
+      if (ND.distT(b.x, b.y, p.x, p.y) < 260) b.glow = true;
 
       if (dead) game.bullets.splice(i, 1);
     }
@@ -655,7 +670,7 @@
       const pk = game.pickups[i];
       pk.life -= dt;
       pk.seed += dt * 4;
-      const d = ND.dist(pk.x, pk.y, p.x, p.y);
+      const d = ND.distT(pk.x, pk.y, p.x, p.y);
 
       // XP orbs always drift toward the player, faster when close.
       // Health orbs need to be walked over, so they keep the tight magnet only.
@@ -666,7 +681,10 @@
         const pull = isOrb
           ? 0.35 + 0.65 * (1 - d / reach)
           : 1 - d / (p.magnet + 40);
-        const a = Math.atan2(p.y - pk.y, p.x - pk.x);
+        const a = Math.atan2(
+          ND.delta(pk.y, p.y, ND.WORLD.h),
+          ND.delta(pk.x, p.x, ND.WORLD.w)
+        );
         const acc = (isOrb ? 1500 : 900) * pull * pull;
         pk.vx += Math.cos(a) * acc * dt;
         pk.vy += Math.sin(a) * acc * dt;
@@ -674,8 +692,8 @@
       const drag = Math.max(0, 1 - 2.4 * dt);
       pk.vx *= drag;
       pk.vy *= drag;
-      pk.x += pk.vx * dt;
-      pk.y += pk.vy * dt;
+      pk.x = ND.wrapX(pk.x + pk.vx * dt);
+      pk.y = ND.wrapY(pk.y + pk.vy * dt);
 
       if (d < p.r + 12) {
         if (pk.type === 'xp') {
@@ -753,14 +771,48 @@
     }
   }
 
-  function drawWorldBounds(ctx, camX, camY) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 59, 107, 0.35)';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = '#ff3b6b';
-    ctx.shadowBlur = 22;
-    ctx.strokeRect(-camX, -camY, ND.WORLD.w, ND.WORLD.h);
-    ctx.restore();
+  // The world is a torus, so a single screen can show two edges of it at once.
+  // These return the world-space offsets we must draw each object at for the
+  // current camera, e.g. [0, -2000] when the view straddles the x seam.
+  function tileOffsets(cam, span, size) {
+    const out = [];
+    const first = Math.floor(cam / size);
+    const last = Math.floor((cam + span - 0.001) / size);
+    // Tile k renders a second copy of the world shifted by k*size, so objects
+    // just past a seam appear at the opposite edge of the screen.
+    for (let k = first; k <= last; k++) out.push(k * size);
+    return out;
+  }
+
+  let tilesX = [0];
+  let tilesY = [0];
+
+  // Draw a world-space object, repeating it across whichever seams are visible.
+  function drawTiled(wx, wy, margin, fn) {
+    const x0 = game.camX - margin;
+    const x1 = game.camX + ND.view.w + margin;
+    const y0 = game.camY - margin;
+    const y1 = game.camY + ND.view.h + margin;
+
+    for (let i = 0; i < tilesX.length; i++) {
+      const dx = tilesX[i];
+      const x = wx + dx;
+      if (x < x0 || x > x1) continue;
+      for (let j = 0; j < tilesY.length; j++) {
+        const dy = tilesY[j];
+        const y = wy + dy;
+        if (y < y0 || y > y1) continue;
+
+        if (dx === 0 && dy === 0) {
+          fn();
+          continue;
+        }
+        ctx.save();
+        ctx.translate(dx, dy);
+        fn();
+        ctx.restore();
+      }
+    }
   }
 
   function drawPickup(ctx, pk) {
@@ -948,8 +1000,7 @@
 
       if (t.world) {
         ctx.font = '700 ' + (t.size || 13) + 'px ui-monospace, monospace';
-        // already inside the camera transform
-        ctx.fillText(t.text, t.x, t.y);
+        drawTiled(t.x, t.y, 120, () => ctx.fillText(t.text, t.x, t.y));
       } else {
         const size = t.size || Math.min(26, 14 + t.maxLife * 3);
         ctx.font = '800 ' + size + 'px ui-monospace, monospace';
@@ -981,115 +1032,122 @@
 
     drawGrid(ctx, camX, camY);
 
+    tilesX = tileOffsets(camX, ND.view.w, ND.WORLD.w);
+    tilesY = tileOffsets(camY, ND.view.h, ND.WORLD.h);
+
     ctx.save();
     ctx.translate(-camX, -camY);
 
-    drawWorldBounds(ctx, camX, camY);
-
     // pickups
     for (const pk of game.pickups) {
-      if (pk.x < camX - 40 || pk.x > camX + ND.view.w + 40) continue;
-      if (pk.y < camY - 40 || pk.y > camY + ND.view.h + 40) continue;
-      drawPickup(ctx, pk);
+      drawTiled(pk.x, pk.y, 40, () => drawPickup(ctx, pk));
     }
 
     // enemies
     for (const e of game.enemies) {
-      if (e.x < camX - 80 || e.x > camX + ND.view.w + 80) continue;
-      if (e.y < camY - 80 || e.y > camY + ND.view.h + 80) continue;
-      ND.drawEnemy(ctx, e);
+      drawTiled(e.x, e.y, 80, () => ND.drawEnemy(ctx, e));
     }
 
     // bullets
-    for (const b of game.bullets) drawBullet(ctx, b);
+    for (const b of game.bullets) {
+      drawTiled(b.x, b.y, 40, () => drawBullet(ctx, b));
+    }
 
     // ---- special effects, under the ship ----
     // BLACK HOLE: a dark core with a spinning accretion ring.
     if (game.blackHole) {
       const bh = game.blackHole;
       const t = performance.now() / 1000;
-      ctx.save();
-      const g2 = ctx.createRadialGradient(bh.x, bh.y, 2, bh.x, bh.y, 120);
-      g2.addColorStop(0, 'rgba(0,0,0,0.95)');
-      g2.addColorStop(0.5, 'rgba(255,43,138,0.35)');
-      g2.addColorStop(1, 'rgba(255,43,138,0)');
-      ctx.fillStyle = g2;
-      ctx.beginPath();
-      ctx.arc(bh.x, bh.y, 120, 0, TAU);
-      ctx.fill();
+      drawTiled(bh.x, bh.y, 130, () => {
+        ctx.save();
+        const g2 = ctx.createRadialGradient(bh.x, bh.y, 2, bh.x, bh.y, 120);
+        g2.addColorStop(0, 'rgba(0,0,0,0.95)');
+        g2.addColorStop(0.5, 'rgba(255,43,138,0.35)');
+        g2.addColorStop(1, 'rgba(255,43,138,0)');
+        ctx.fillStyle = g2;
+        ctx.beginPath();
+        ctx.arc(bh.x, bh.y, 120, 0, TAU);
+        ctx.fill();
 
-      ctx.strokeStyle = '#ff2b8a';
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = '#ff2b8a';
-      ctx.shadowBlur = 20;
-      ctx.beginPath();
-      ctx.arc(bh.x, bh.y, 26 + Math.sin(t * 9) * 4, 0, TAU);
-      ctx.stroke();
+        ctx.strokeStyle = '#ff2b8a';
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = '#ff2b8a';
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.arc(bh.x, bh.y, 26 + Math.sin(t * 9) * 4, 0, TAU);
+        ctx.stroke();
 
-      ctx.beginPath();
-      ctx.arc(bh.x, bh.y, 46, t * 3, t * 3 + 2.2);
-      ctx.stroke();
-      ctx.restore();
+        ctx.beginPath();
+        ctx.arc(bh.x, bh.y, 46, t * 3, t * 3 + 2.2);
+        ctx.stroke();
+        ctx.restore();
+      });
     }
 
     // NOVA: an expanding shockwave ring.
     if (game.novaFx) {
       const n = game.novaFx;
       const k = 1 - n.life / 0.5;
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, 1 - k);
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 10 * (1 - k) + 1;
-      ctx.shadowColor = '#22d3ee';
-      ctx.shadowBlur = 24;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.max * k, 0, TAU);
-      ctx.stroke();
-      ctx.restore();
+      drawTiled(n.x, n.y, n.max + 20, () => {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - k);
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 10 * (1 - k) + 1;
+        ctx.shadowColor = '#22d3ee';
+        ctx.shadowBlur = 24;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.max * k, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      });
     }
 
     // ORBITAL DRONE
     const pl = game.player;
     if (pl && pl.specials && pl.specials.indexOf('drone') !== -1) {
       const orbit = 52;
-      const dx = pl.x + Math.cos(pl.droneAngle) * orbit;
-      const dy = pl.y + Math.sin(pl.droneAngle) * orbit;
-      ctx.save();
-      ctx.fillStyle = '#ffd166';
-      ctx.shadowColor = '#ffd166';
-      ctx.shadowBlur = 16;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 5, 0, TAU);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,209,102,0.35)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(pl.x, pl.y, orbit, 0, TAU);
-      ctx.stroke();
-      ctx.restore();
+      drawTiled(pl.x, pl.y, orbit + 20, () => {
+        const dx = pl.x + Math.cos(pl.droneAngle) * orbit;
+        const dy = pl.y + Math.sin(pl.droneAngle) * orbit;
+        ctx.save();
+        ctx.fillStyle = '#ffd166';
+        ctx.shadowColor = '#ffd166';
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 5, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,209,102,0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(pl.x, pl.y, orbit, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      });
     }
 
     // player
     if (game.state === 'playing' || game.state === 'paused') {
-      game.player.draw(ctx);
+      drawTiled(pl.x, pl.y, 40, () => {
+        game.player.draw(ctx);
 
-      // AEGIS shield bubble while charged.
-      if (game.player.aegis > 0) {
-        ctx.save();
-        const t = performance.now() / 700;
-        ctx.strokeStyle = 'rgba(59,255,158,' + (0.45 + Math.sin(t) * 0.18) + ')';
-        ctx.lineWidth = 2;
-        ctx.shadowColor = '#3bff9e';
-        ctx.shadowBlur = 16;
-        ctx.beginPath();
-        ctx.arc(game.player.x, game.player.y, game.player.r + 14, 0, TAU);
-        ctx.stroke();
-        ctx.restore();
-      }
+        // AEGIS shield bubble while charged.
+        if (game.player.aegis > 0) {
+          ctx.save();
+          const t = performance.now() / 700;
+          ctx.strokeStyle = 'rgba(59,255,158,' + (0.45 + Math.sin(t) * 0.18) + ')';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = '#3bff9e';
+          ctx.shadowBlur = 16;
+          ctx.beginPath();
+          ctx.arc(game.player.x, game.player.y, game.player.r + 14, 0, TAU);
+          ctx.stroke();
+          ctx.restore();
+        }
+      });
     }
 
     // particles
-    ND.drawParticles(ctx, camX, camY);
+    ND.drawParticles(ctx, camX, camY, tilesX, tilesY);
 
     drawTexts(ctx, camX, camY);
     ctx.restore();
@@ -1424,6 +1482,23 @@
   const BOARD_SIZE = 8;
   const NAME_KEY = 'neondrift.name.v1';
 
+  // Anything that comes back from localStorage or a name field is untrusted.
+  // These helpers keep the leaderboard renderable and stop a hand-edited save
+  // from poisoning the board with NaN, negatives, or absurd values.
+  function safeName(s) {
+    return String(s == null ? '' : s)
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, '') // control chars
+      .replace(/[<>&"'`]/g, '')                     // belt-and-braces vs markup
+      .trim()
+      .slice(0, 12) || 'PILOT';
+  }
+
+  function safeNum(v, max) {
+    const n = Number(v);
+    if (!isFinite(n) || n < 0) return 0;
+    return Math.min(Math.floor(n), max);
+  }
+
   function loadBoard() {
     try {
       const raw = localStorage.getItem(BOARD_KEY);
@@ -1433,12 +1508,12 @@
       return arr
         .filter((e) => e && typeof e === 'object')
         .map((e) => ({
-          name: String(e.name || 'PILOT').slice(0, 12),
-          score: Number(e.score) || 0,
-          wave: Number(e.wave) || 0,
-          time: Number(e.time) || 0,
-          kills: Number(e.kills) || 0,
-          date: Number(e.date) || 0
+          name: safeName(e.name),
+          score: safeNum(e.score, 9999999),
+          wave: safeNum(e.wave, 9999),
+          time: safeNum(e.time, 1e7),
+          kills: safeNum(e.kills, 1e7),
+          date: safeNum(e.date, 8.64e15)
         }))
         .sort((a, b) => b.score - a.score)
         .slice(0, BOARD_SIZE);
@@ -1476,11 +1551,11 @@
     const board = loadBoard();
     const date = Number(run.date) || Date.now();
     board.push({
-      name: run.name || 'PILOT',
-      score: run.score,
-      wave: run.wave,
-      time: run.time,
-      kills: run.kills,
+      name: safeName(run.name),
+      score: safeNum(run.score, 1e9),
+      wave: safeNum(run.wave, 9999),
+      time: safeNum(run.time, 1e7),
+      kills: safeNum(run.kills, 1e7),
       date: date
     });
     board.sort((a, b) => b.score - a.score || b.wave - a.wave);
@@ -1670,7 +1745,10 @@
 
     // Fill the name field with the last used callsign.
     const nameInput = $('nameInput');
-    if (nameInput) nameInput.value = loadName() || 'PILOT';
+    if (nameInput) {
+      nameInput.value = safeName(loadName());
+      nameInput.maxLength = 12;
+    }
 
     $('nameEntry').classList.remove('hidden');
     $('bestLine').textContent = '';
@@ -1701,7 +1779,7 @@
 
     const input = $('nameInput');
     const raw = input ? input.value : '';
-    const name = (raw.trim() || 'PILOT').toUpperCase().slice(0, 12);
+    const name = safeName((raw.trim() || 'PILOT').toUpperCase());
 
     saveName(name);
     const result = submitRun({

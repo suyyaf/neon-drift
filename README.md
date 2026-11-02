@@ -2,6 +2,26 @@
 
 A top-down neon arena shooter. Vanilla JS + Canvas, no dependencies, no build step.
 
+## Arena
+
+The arena is a **torus**: fly off the right edge and you reappear on the left;
+same top and bottom. There is no wall to get cornered against.
+
+This is real wrap-around, not just a teleport. Every bit of spatial logic uses
+shortest-path (toroidal) math:
+
+- Enemies chase you across the seam instead of walking the length of the map.
+- Aiming, the orbital drone, pickups and the black hole all take the short route.
+- Bullets and particles persist through the edge and can hit on the far side.
+- Objects near a seam are drawn on **both** sides of the screen at once, so you
+  can see a threat approaching from the other edge.
+- The camera wraps too, lerping in toroidal space so it never whips across the
+  world when you cross.
+
+Helpers live in `js/core.js`: `ND.wrapX`, `ND.wrapY`, `ND.wrap`, `ND.delta`,
+`ND.distT`. Use `ND.distT` (not `ND.dist`) for any gameplay distance check.
+
+
 ## Play
 
 Open `index.html` in a browser. That's it.
@@ -111,11 +131,20 @@ highlighted. The same board is shown on the title screen.
 Your last callsign is remembered in `neondrift.name.v1`. Clearing site data
 resets both.
 
+Because both keys are client-side, they are **untrusted input**. Everything read
+back is sanitized on load: names are stripped of control characters and markup,
+numbers are coerced to finite non-negative integers and capped, and non-object
+entries are dropped. A hand-edited save can still lie about its own score — it
+is your own browser's board — but it cannot break the page, inject markup, or
+crash the renderer.
+
 ## How it plays
 
 Kill enemies, collect XP orbs, level up, and choose 1 of 3 upgrades each time.
 Waves escalate on a timer. The first boss arrives on **wave 2**, then every 3rd
-wave after that; bosses fire radial bursts.
+wave after that; bosses fire radial bursts. The wave clock keeps running during
+a boss fight (escorts trickle in at 40% of the normal cap), so a long boss kill
+never freezes progression.
 Dying ends the run and shows your time, wave, kills, and score.
 
 ## Upgrades and build tracker
