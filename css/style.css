@@ -279,6 +279,107 @@ kbd {
   50% { opacity: 0.55; }
 }
 
+/* ---------- Leaderboard ---------- */
+
+.board {
+  width: min(520px, 88vw);
+  margin: 6px 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-align: left;
+}
+
+.board-empty {
+  padding: 14px 0;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: #405466;
+}
+
+.board-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto 44px 52px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.08);
+  color: #8ea6bb;
+}
+
+.board-row .rk { color: #46617a; font-weight: 700; }
+.board-row .nm { color: #cfeaf5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-row .sc { color: #8ef0ff; font-weight: 800; }
+.board-row .wv { color: #5c7a90; }
+.board-row .dt { color: #3f5566; text-align: right; font-size: 10px; }
+
+/* Top three get metal accents. */
+.board-row.gold   { color: #ffe066; }
+.board-row.gold .rk, .board-row.gold .sc { color: #ffd166; }
+.board-row.gold .nm { color: #fff4c2; }
+
+.board-row.silver .rk, .board-row.silver .sc { color: #cfe3f2; }
+.board-row.silver .nm { color: #eaf6ff; }
+
+.board-row.bronze .rk, .board-row.bronze .sc { color: #e0a06a; }
+.board-row.bronze .nm { color: #ffe3cc; }
+
+/* The run you just finished. */
+.board-row.me {
+  background: rgba(34, 211, 238, 0.1);
+  border-bottom-color: rgba(34, 211, 238, 0.4);
+  box-shadow: inset 2px 0 0 var(--cyan);
+}
+
+/* ---------- Name entry ---------- */
+
+.name-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.name-entry.hidden { display: none; }
+
+.name-entry label {
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  color: #6f8ba0;
+  text-transform: uppercase;
+}
+
+#nameInput {
+  width: 150px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: center;
+  color: #d9feff;
+  background: rgba(6, 14, 22, 0.9);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 3px;
+  outline: none;
+  caret-color: var(--cyan);
+}
+
+#nameInput:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18), 0 0 18px rgba(34, 211, 238, 0.28);
+}
+
+#btnSubmit {
+  margin: 0;
+  padding: 11px 20px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+}
+
 /* ---------- In-game control bar ---------- */
 
 .hudbar {

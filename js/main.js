@@ -839,6 +839,9 @@
   }
 
   window.addEventListener('keydown', (e) => {
+    // Never let gameplay shortcuts fire while typing a callsign.
+    if (e.target && e.target.tagName === 'INPUT') return;
+
     const n = parseInt(e.key, 10);
     if (game.state === 'upgrade' && n >= 1 && n <= 3 && game.currentPicks) {
       chooseUpgrade(game.currentPicks[n - 1]);
@@ -855,41 +858,126 @@
     }
   });
 
-  // ---------------- best run persistence ----------------
-  const BEST_KEY = 'neondrift.best.v1';
+  // ---------------- high score leaderboard ----------------
+  const BOARD_KEY = 'neondrift.board.v1';
+  const BOARD_SIZE = 8;
+  const NAME_KEY = 'neondrift.name.v1';
 
-  function loadBest() {
+  function loadBoard() {
     try {
-      const raw = localStorage.getItem(BEST_KEY);
-      if (!raw) return { score: 0, wave: 0, time: 0, kills: 0 };
-      const b = JSON.parse(raw);
-      return {
-        score: Number(b.score) || 0,
-        wave: Number(b.wave) || 0,
-        time: Number(b.time) || 0,
-        kills: Number(b.kills) || 0
-      };
+      const raw = localStorage.getItem(BOARD_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((e) => e && typeof e === 'object')
+        .map((e) => ({
+          name: String(e.name || 'PILOT').slice(0, 12),
+          score: Number(e.score) || 0,
+          wave: Number(e.wave) || 0,
+          time: Number(e.time) || 0,
+          kills: Number(e.kills) || 0,
+          date: Number(e.date) || 0
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, BOARD_SIZE);
     } catch (e) {
-      return { score: 0, wave: 0, time: 0, kills: 0 };
+      return [];
     }
   }
 
-  function saveBest(best) {
+  function saveBoard(board) {
     try {
-      localStorage.setItem(BEST_KEY, JSON.stringify(best));
+      localStorage.setItem(BOARD_KEY, JSON.stringify(board.slice(0, BOARD_SIZE)));
     } catch (e) {
-      /* storage can be blocked; a high score is not worth crashing a run */
+      /* storage can be blocked; never let scoring crash a run */
     }
+  }
+
+  function loadName() {
+    try {
+      return (localStorage.getItem(NAME_KEY) || '').slice(0, 12);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function saveName(name) {
+    try {
+      localStorage.setItem(NAME_KEY, name);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // Returns { rank, board } — rank is 1-based, or 0 if it did not place.
+  function submitRun(run) {
+    const board = loadBoard();
+    const date = Number(run.date) || Date.now();
+    board.push({
+      name: run.name || 'PILOT',
+      score: run.score,
+      wave: run.wave,
+      time: run.time,
+      kills: run.kills,
+      date: date
+    });
+    board.sort((a, b) => b.score - a.score || b.wave - a.wave);
+    const trimmed = board.slice(0, BOARD_SIZE);
+    saveBoard(trimmed);
+
+    const idx = trimmed.findIndex((e) => e.date === date);
+    return { rank: idx === -1 ? 0 : idx + 1, board: trimmed, date: date };
+  }
+
+  function medalFor(rank) {
+    return rank === 1 ? '01' : rank === 2 ? '02' : rank === 3 ? '03' : String(rank).padStart(2, '0');
+  }
+
+  function renderBoard(el, board, highlightDate) {
+    if (!el) return;
+    if (!board.length) {
+      el.innerHTML = '<div class="board-empty">no runs recorded</div>';
+      return;
+    }
+    el.innerHTML = board
+      .map((e, i) => {
+        const rank = i + 1;
+        const cls =
+          'board-row' +
+          (rank === 1 ? ' gold' : rank === 2 ? ' silver' : rank === 3 ? ' bronze' : '') +
+          (highlightDate && e.date === highlightDate ? ' me' : '');
+        const when = e.date ? new Date(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+        return (
+          '<div class="' + cls + '">' +
+            '<span class="rk">' + medalFor(rank) + '</span>' +
+            '<span class="nm">' + escapeHtml(e.name) + '</span>' +
+            '<span class="sc">' + e.score + '</span>' +
+            '<span class="wv">W' + e.wave + '</span>' +
+            '<span class="dt">' + when + '</span>' +
+          '</div>'
+        );
+      })
+      .join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
   }
 
   function showMenuBest() {
-    const best = loadBest();
+    const board = loadBoard();
     const el = $('menuBest');
     if (!el) return;
-    el.textContent = best.score > 0
-      ? 'BEST ' + best.score + '  ·  WAVE ' + best.wave
-      : 'NO RUNS RECORDED';
-    el.classList.toggle('is-record', false);
+    if (!board.length) {
+      el.textContent = 'NO RUNS RECORDED';
+    } else {
+      el.textContent = 'BEST ' + board[0].score + '  ·  ' + board[0].name;
+    }
+    el.classList.remove('is-record');
+    renderBoard($('menuBoard'), board);
   }
 
   // ---------------- state transitions ----------------
@@ -926,7 +1014,8 @@
   }
 
   function startGame() {
-    ND.audio.init();    reset();
+    ND.audio.init();
+    reset();
     game.state = 'playing';
     game.lastShot = 0;
     hideAllOverlays();
@@ -988,39 +1077,93 @@
 
     $('hudbar').classList.add('hidden');
 
-    const best = loadBest();
-    const isRecord = game.score > best.score;
-    if (isRecord) {
-      saveBest({
-        score: game.score,
-        wave: game.wave,
-        time: Math.round(game.time),
-        kills: game.player.kills
-      });
-    }
-
     $('finalStats').innerHTML =
       '<div>TIME SURVIVED &nbsp;<b>' + Math.round(game.time) + 's</b></div>' +
       '<div>WAVE REACHED &nbsp;<b>' + game.wave + '</b></div>' +
       '<div>ELIMINATIONS &nbsp;<b>' + game.player.kills + '</b></div>' +
       '<div>FINAL SCORE &nbsp;<b>' + game.score + '</b></div>';
 
+    // Fill the name field with the last used callsign.
+    const nameInput = $('nameInput');
+    if (nameInput) nameInput.value = loadName() || 'PILOT';
+
+    $('nameEntry').classList.remove('hidden');
+    $('bestLine').textContent = '';
+    $('gameoverBoard').innerHTML = '';
+    $('gameover').classList.remove('hidden');
+
+    game.runRecord = {
+      score: game.score,
+      wave: game.wave,
+      time: Math.round(game.time),
+      kills: game.player.kills,
+      date: Date.now()
+    };
+
+    // Focus the field so a player can type a name immediately.
+    setTimeout(() => {
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.select();
+      }
+    }, 60);
+  }
+
+  // Save the run under the entered callsign and reveal the leaderboard.
+  function submitScore() {
+    const run = game.runRecord;
+    if (!run || run.submitted) return;
+
+    const input = $('nameInput');
+    const raw = input ? input.value : '';
+    const name = (raw.trim() || 'PILOT').toUpperCase().slice(0, 12);
+
+    saveName(name);
+    const result = submitRun({
+      name: name,
+      score: run.score,
+      wave: run.wave,
+      time: run.time,
+      kills: run.kills,
+      date: run.date
+    });
+    run.submitted = true;
+
+    $('nameEntry').classList.add('hidden');
+    renderBoard($('gameoverBoard'), result.board, run.date);
+
     const bestEl = $('bestLine');
-    if (isRecord && game.score > 0) {
-      bestEl.textContent = 'NEW RECORD';
+    bestEl.classList.remove('is-record');
+    if (result.rank === 1) {
+      bestEl.textContent = 'NEW HIGH SCORE';
       bestEl.classList.add('is-record');
+    } else if (result.rank > 0) {
+      bestEl.textContent = 'PLACED #' + result.rank + ' ON THE BOARD';
     } else {
-      bestEl.textContent = 'BEST ' + best.score + '  ·  WAVE ' + best.wave + '  ·  ' + best.kills + ' KILLS';
-      bestEl.classList.remove('is-record');
+      bestEl.textContent = 'NO PLACEMENT — BOARD FULL';
     }
 
-    $('gameover').classList.remove('hidden');
+    showMenuBest();
   }
 
   // ---------------- UI wiring ----------------
   $('play').addEventListener('click', startGame);
   $('restart').addEventListener('click', startGame);
   $('btnMenu').addEventListener('click', stopGame);
+
+  $('btnSubmit').addEventListener('click', submitScore);
+
+  const nameInput = $('nameInput');
+  if (nameInput) {
+    nameInput.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // typing must not trigger Q/E weapon swaps
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitScore();
+      }
+    });
+    nameInput.addEventListener('keyup', (e) => e.stopPropagation());
+  }
 
   $('btnPause').addEventListener('click', () => {
     if (game.state === 'playing') pauseGame();

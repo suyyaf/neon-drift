@@ -60,9 +60,14 @@ Enemies are always pushed out of your hull, so nothing can camp on your ship.
 
 ## High scores
 
-The best run is saved to `localStorage` under `neondrift.best.v1` and shown on
-both the title screen and the game-over screen. A new record is highlighted.
-Clearing site data resets it.
+The game keeps a **top-8 leaderboard** in `localStorage` (`neondrift.board.v1`).
+When you die, type a callsign (up to 12 characters, defaults to your last one)
+and the run is ranked by score. The board shows rank, name, score, wave, and
+date, with gold/silver/bronze accents for the top three and your fresh entry
+highlighted. The same board is shown on the title screen.
+
+Your last callsign is remembered in `neondrift.name.v1`. Clearing site data
+resets both.
 
 ## How it plays
 
