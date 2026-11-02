@@ -22,13 +22,15 @@ python -m http.server 8123
 | Hold Left Mouse | Fire |
 | `Space` / `Shift` | Dash (brief invulnerability) |
 | `Q` / `E` | Cycle weapon |
+| `R` | Fire a chargeable special |
 | `M` | Mute / unmute sound |
 | `Esc` | Pause / resume |
 
 The game **auto-pauses** when the window loses focus or the tab is hidden, so a
 run never continues unseen.
 
-| `1` `2` `3` | Pick upgrade on level up |
+| `1` `2` `3` | Buy an upgrade on level up |
+| `B` | Bank the level for scrap instead |
 
 On-screen buttons: **PAUSE** / **STOP** bottom-left during a run; **RESUME** / **END RUN** on the pause screen; **RUN IT BACK** / **MAIN MENU** after death.
 
@@ -118,23 +120,55 @@ Dying ends the run and shows your time, wave, kills, and score.
 
 ## Upgrades and build tracker
 
-Every level-up offers 3 random upgrades with an icon, a level readout, and a
-row of pips showing progress toward the cap. Cards badge `NEW` on first
-acquisition and `MAX` (green border) when the pick completes the upgrade.
+Upgrades are bought with **scrap**, earned from every kill (`score / 5`; tough
+enemies pay more, bosses pay 120). Level-ups pause the game and offer three
+picks, but you can only take one you can afford:
 
-Each upgrade has a `max` level (weapon-specific ones cap lower, at 2–4), so a
-build converges rather than scaling forever. Completed upgrades stop appearing
-in the offer pool.
+- The card shows its price and your bank at the top of the screen.
+- Unaffordable cards are dimmed with the shortfall in red (`need 35`).
+- **BANK THE LEVEL** (or `B`) refunds scrap instead, so a level-up is never a
+  dead end.
 
-A **BUILD** panel sits in the bottom-right during play and lists everything you
-have acquired, ranked by how complete each module is. Icons are tinted cyan,
-weapon upgrades amber, and maxed modules green with a `n/n` readout. Past 9
-entries the panel collapses the rest into a `+n MORE` line so it never grows
-into the HUD.
+Price scales with **how many upgrades you have already bought** (`10 + buys * 7`,
+×1.5 for weapon upgrades), not with an upgrade's own level. That makes spreading
+thin no cheaper than going deep — farming is what buys power. In testing roughly
+90% of earned scrap converted into upgrades, which keeps the economy tight but
+never starving.
 
-All icons are inline SVG path data in `js/icons.js` (`ND.iconSvg(id, size)`),
-drawn on a 24×24 viewBox with `currentColor` so they inherit the accent colour,
-and scale crisply at any size.
+Every upgrade has an icon, a level readout, and pips showing progress toward its
+cap. Cards badge `NEW` on first acquisition and `MAX` (green) when a pick
+completes the upgrade. Capped upgrades leave the offer pool so a build converges.
+
+A **BUILD** panel sits bottom-right during play, ranked by completion. Icons are
+tinted cyan, weapon upgrades amber, maxed modules green. Past 9 entries it
+collapses into `+n MORE`. Active set bonuses are listed under `SYNERGY`.
+
+All icons are inline SVG path data in `js/icons.js` (`ND.iconSvg(id, size)`).
+
+## Boss specials
+
+Every boss kill grants a special ability — you can hold at most **3**. After
+that, extra boss kills pay a scrap bonus instead.
+
+| Special | Effect |
+| --- | --- |
+| **NOVA CORE** | `R`: 340-radius shockwave for 4.5× damage |
+| **TIME DILATION** | `R`: slows every hostile to 28% speed for 4s |
+| **BLACK HOLE** | `R`: drags enemies into a point, then detonates |
+| **AEGIS PLATING** | Passive: absorbs one hit, recharges every 7s |
+| **ORBITAL DRONE** | Passive: circles you and auto-fires |
+
+Specials are shown bottom-left with a live cooldown; actives flash bright when
+ready. `R` fires the first active special that is off cooldown. Passives are
+marked `ON`.
+
+## Ship scale
+
+All ship hitboxes and visuals are sized through `SHIP` in `js/entities.js`
+(currently `0.65`). Changing that one constant scales the player, every enemy,
+the boss, and — because it feeds the collision radius — the hitboxes in lockstep
+with the art. Muzzle offsets, thruster length, cockpit size and the drone orbit
+derive from it too.
 
 ## Structure
 
@@ -144,7 +178,7 @@ css/style.css     layout, CRT scanlines, neon buttons, upgrade cards, build pane
 js/core.js        canvas + view, math helpers, input, particles, WebAudio synth
 js/icons.js       inline SVG icon set for every upgrade
 js/music.js       procedural synthwave soundtrack
-js/entities.js    player, enemy types, pickups, upgrade definitions
+js/entities.js    player, enemy types, pickups, upgrades, specials, synergies
 js/main.js        game loop, wave director, camera, HUD, state machine
 ```
 

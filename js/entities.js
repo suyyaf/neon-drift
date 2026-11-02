@@ -4,13 +4,20 @@
 
   const TAU = ND.TAU;
 
+  // All ship hitboxes/visuals are sized through this multiplier. Keeping it in
+  // one place means "make everything 35% smaller" is a one-line change, and it
+  // scales the collision radius in lockstep with the art.
+  const SHIP = 0.65;
+  ND.SHIP_SCALE = SHIP;
+
   // =========================================================
   // PLAYER
   // =========================================================
   ND.Player = function () {
     this.x = ND.WORLD.w / 2;
     this.y = ND.WORLD.h / 2;
-    this.r = 13;
+    this.r = 13 * SHIP;
+    this.scale = SHIP;
     this.vx = 0;
     this.vy = 0;
     this.angle = 0;
@@ -42,6 +49,24 @@
     this.railWidth = 0;
     this.flak = 0;
     this.ramMul = 1;
+
+    // synergy flags (set by ND.applySynergies)
+    this.ignite = 0;
+    this.critBurst = false;
+    this.armor = 0;
+    this.leechMul = 1;
+    this.railSurge = false;
+    this.ricochet = 0;
+    this.ramSynergy = 1;
+    this.synergies = [];
+
+    // boss-kill specials
+    this.specials = [];        // array of special ids, max 3
+    this.specialCd = {};       // id -> seconds remaining
+    this.aegis = 0;            // shield charge, 1 = ready
+    this.aegisTimer = 0;
+    this.droneAngle = 0;
+    this.droneCd = 0;
 
     this.dashCd = 0;
     this.dashMax = 1.6;
@@ -226,6 +251,8 @@
       extraPierce += this.railPierce;
       dmgMul *= this.railDmgMul;
       width += this.railWidth;
+      // RAILGUN synergy: the beam punches deeper.
+      if (this.railSurge) extraPierce += 2;
     }
 
     const base = n > 1 ? this.angle - spread * (n - 1) / 2 : this.angle;
@@ -236,8 +263,8 @@
       const isCrit = Math.random() < this.crit;
       const dmg = this.damage * dmgMul * (isCrit ? 2.4 : 1);
       game.bullets.push({
-        x: this.x + Math.cos(a) * (this.r + 8),
-        y: this.y + Math.sin(a) * (this.r + 8),
+        x: this.x + Math.cos(a) * (this.r + 8 * this.scale),
+        y: this.y + Math.sin(a) * (this.r + 8 * this.scale),
         vx: Math.cos(a) * speed * ND.rand(0.97, 1.03),
         vy: Math.sin(a) * speed * ND.rand(0.97, 1.03),
         r: (isCrit ? 6 : 4) * (w.id === 'rail' ? 1.35 : 1),
@@ -248,14 +275,18 @@
         life: this.bulletLife * w.life,
         color: isCrit ? '#ffe066' : w.color,
         width: width,
-        flak: w.id === 'pulse' ? this.flak : 0
+        flak: w.id === 'pulse' ? this.flak : 0,
+        ignite: this.ignite,
+        burst: isCrit && this.critBurst,
+        ricochet: w.id === 'scatter' ? this.ricochet : 0,
+        bounced: 0
       });
     }
 
     // muzzle flash
     ND.spawnParticles(
-      this.x + Math.cos(this.angle) * (this.r + 10),
-      this.y + Math.sin(this.angle) * (this.r + 10),
+      this.x + Math.cos(this.angle) * (this.r + 10 * this.scale),
+      this.y + Math.sin(this.angle) * (this.r + 10 * this.scale),
       w.id === 'scatter' ? 8 : 4,
       { color: w.color, speed: 260, life: 0.14, size: 2.6, dir: this.angle, spread: w.id === 'scatter' ? 1.1 : 0.7, drag: 6 }
     );
@@ -266,7 +297,22 @@
 
   ND.Player.prototype.hurt = function (dmg) {
     if (this.invuln > 0 || this.dashTime > 0) return false;
-    this.hp -= dmg;
+
+    // AEGIS special: eats one hit and goes on cooldown.
+    if (this.aegis > 0) {
+      this.aegis = 0;
+      this.aegisTimer = 7;
+      this.invuln = 0.4;
+      ND.addShake(7);
+      ND.audio.play('switch');
+      ND.spawnParticles(this.x, this.y, 26, {
+        color: '#3bff9e', speed: 380, life: 0.6, size: 3.4, drag: 2
+      });
+      return false;
+    }
+
+    // BULWARK synergy softens every incoming hit.
+    this.hp -= dmg * (1 - this.armor);
     this.invuln = 0.35;
     this.hurtFlash = 1;
     ND.addShake(7);
@@ -291,15 +337,16 @@
     const t = performance.now() / 1000;
 
     // dash cooldown ring
+    const ringGap = 12 * this.scale;
     if (this.dashCd > 0) {
       ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r + 12, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - this.dashCd / this.dashMax));
+      ctx.arc(this.x, this.y, this.r + ringGap, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - this.dashCd / this.dashMax));
       ctx.strokeStyle = 'rgba(34,211,238,0.35)';
       ctx.lineWidth = 2;
       ctx.stroke();
     } else {
       ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r + 12, 0, TAU);
+      ctx.arc(this.x, this.y, this.r + ringGap, 0, TAU);
       ctx.strokeStyle = 'rgba(34,211,238,0.85)';
       ctx.lineWidth = 1.5;
       ctx.shadowColor = '#22d3ee';
@@ -315,10 +362,11 @@
     // thruster glow behind
     const sp = Math.hypot(this.vx, this.vy);
     if (sp > 40) {
+      const s = this.scale;
       ctx.beginPath();
-      ctx.moveTo(-this.r - 2, -5);
-      ctx.lineTo(-this.r - 10 - Math.min(16, sp * 0.03), 0);
-      ctx.lineTo(-this.r - 2, 5);
+      ctx.moveTo(-this.r - 2 * s, -5 * s);
+      ctx.lineTo(-this.r - (10 + Math.min(16, sp * 0.03)) * s, 0);
+      ctx.lineTo(-this.r - 2 * s, 5 * s);
       ctx.closePath();
       ctx.fillStyle = 'rgba(34,211,238,' + Math.min(0.6, sp / 520) + ')';
       ctx.fill();
@@ -327,7 +375,7 @@
     // ship body
     const flash = this.hurtFlash > 0.5;
     ctx.beginPath();
-    ctx.moveTo(this.r + 6, 0);
+    ctx.moveTo(this.r + 6 * this.scale, 0);
     ctx.lineTo(-this.r * 0.7, this.r * 0.85);
     ctx.lineTo(-this.r * 0.25, 0);
     ctx.lineTo(-this.r * 0.7, -this.r * 0.85);
@@ -344,7 +392,7 @@
 
     // cockpit
     ctx.beginPath();
-    ctx.arc(0, 0, 3.2 + Math.sin(t * 6) * 0.6, 0, TAU);
+    ctx.arc(0, 0, (3.2 + Math.sin(t * 6) * 0.6) * this.scale, 0, TAU);
     ctx.fillStyle = '#d8feff';
     ctx.shadowColor = '#bff6ff';
     ctx.shadowBlur = 10;
@@ -386,7 +434,7 @@
       y: y,
       vx: 0,
       vy: 0,
-      r: def.r,
+      r: def.r * SHIP,
       hp: def.hp * ringMul,
       maxHp: def.hp * ringMul,
       speed: def.speed * Math.min(1.55, 1 + (game.wave - 1) * 0.045),
@@ -579,11 +627,12 @@
 
     // hp bar
     if (hpT < 1) {
-      const w = e.r * 2;
+      const w = Math.max(14, e.r * 2);
+      const gap = 8 * ND.SHIP_SCALE;
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(e.x - w / 2, e.y - e.r - 12, w, 3.5);
+      ctx.fillRect(e.x - w / 2, e.y - e.r - gap, w, 3.5);
       ctx.fillStyle = hpT > 0.4 ? '#3bff9e' : '#ff3b6b';
-      ctx.fillRect(e.x - w / 2, e.y - e.r - 12, w * hpT, 3.5);
+      ctx.fillRect(e.x - w / 2, e.y - e.r - gap, w * hpT, 3.5);
     }
   };
 
@@ -596,6 +645,199 @@
       vx: ND.rand(-90, 90), vy: ND.rand(-90, 90),
       life: 22, seed: ND.rand(0, TAU), bob: 0
     });
+  };
+
+  // =========================================================
+  // SPECIALS — boss-kill rewards
+  // =========================================================
+  // Defeating a boss grants one of these. You can hold at most
+  // ND.MAX_SPECIALS, after which extra boss kills pay out scrap instead.
+  // Actives fire on R; passives tick on their own.
+  ND.MAX_SPECIALS = 3;
+
+  ND.SPECIALS = [
+    {
+      id: 'nova',
+      name: 'NOVA CORE',
+      desc: 'R: detonate a shockwave that shreds nearby hostiles',
+      color: '#22d3ee',
+      active: true,
+      cooldown: 9,
+      fire: (p, game) => {
+        const R = 340;
+        ND.spawnParticles(p.x, p.y, 60, {
+          color: '#22d3ee', speed: 720, life: 0.6, size: 4.5, drag: 2.2
+        });
+        ND.addShake(16);
+        ND.audio.play('explode');
+        game.novaFx = { x: p.x, y: p.y, r: 0, max: R, life: 0.5 };
+        for (const e of game.enemies.slice()) {
+          const d = ND.dist(p.x, p.y, e.x, e.y);
+          if (d < R + e.r) ND.damageEnemy(e, p.damage * 4.5, false);
+        }
+      }
+    },
+    {
+      id: 'dilation',
+      name: 'TIME DILATION',
+      desc: 'R: slow every hostile to a crawl for 4s',
+      color: '#a06bff',
+      active: true,
+      cooldown: 14,
+      fire: (p, game) => {
+        game.slowTime = 4;
+        ND.addShake(6);
+        ND.audio.play('dash');
+        ND.spawnParticles(p.x, p.y, 40, {
+          color: '#a06bff', speed: 420, life: 0.8, size: 3, drag: 1.6
+        });
+      }
+    },
+    {
+      id: 'aegis',
+      name: 'AEGIS PLATING',
+      desc: 'Passive: absorbs one hit, recharges every 7s',
+      color: '#3bff9e',
+      active: false
+    },
+    {
+      id: 'drone',
+      name: 'ORBITAL DRONE',
+      desc: 'Passive: a drone circles you and fires on its own',
+      color: '#ffd166',
+      active: false
+    },
+    {
+      id: 'singularity',
+      name: 'BLACK HOLE',
+      desc: 'R: collapse hostiles into a point, then detonate',
+      color: '#ff2b8a',
+      active: true,
+      cooldown: 16,
+      fire: (p, game) => {
+        // Aim at the densest nearby cluster.
+        let best = null, bestScore = -1;
+        for (const e of game.enemies) {
+          if (ND.dist(p.x, p.y, e.x, e.y) > 620) continue;
+          let s = 0;
+          for (const o of game.enemies) {
+            if (ND.dist(e.x, e.y, o.x, o.y) < 170) s++;
+          }
+          if (s > bestScore) { bestScore = s; best = e; }
+        }
+        const tx = best ? best.x : p.x + Math.cos(p.angle) * 320;
+        const ty = best ? best.y : p.y + Math.sin(p.angle) * 320;
+        game.blackHole = { x: tx, y: ty, life: 1.1, t: 0 };
+        ND.audio.play('boss');
+      }
+    }
+  ];
+
+  ND.SPECIAL_BY_ID = {};
+  ND.SPECIALS.forEach((s) => { ND.SPECIAL_BY_ID[s.id] = s; });
+
+  // Cost in scrap for the next upgrade. Price scales with how many upgrades you
+  // have already bought (not with that upgrade's level) so spreading thin is no
+  // cheaper than going deep — farming is what actually buys power.
+  ND.upgradeCost = function (up, totalBought) {
+    const weaponMul = up.weapon ? 1.5 : 1;
+    return Math.round((10 + totalBought * 7) * weaponMul);
+  };
+
+  // Scrap paid out for killing an enemy. Scaled off its score so tough
+  // enemies are worth farming; bosses are a windfall.
+  ND.scrapValue = function (e) {
+    if (e.boss) return 120;
+    return Math.max(1, Math.round((e.score || 10) / 5));
+  };
+
+  // Stacking enough points in related upgrades unlocks a set bonus. These are
+  // checked against `game.upgradeCounts` (not the player) so they reset with
+  // the run, and `apply` only configures flags — the real work happens in the
+  // damage pipeline so it stays cheap.
+  ND.SYNERGIES = [
+    {
+      id: 'incendiary',
+      name: 'INCENDIARY',
+      desc: 'Bullets set targets alight',
+      needs: [['dmg', 4], ['bspeed', 2]],
+      color: '#ff8a3c',
+      apply: (p) => { p.ignite = 0.3; }   // fraction of hit damage as burn / sec
+    },
+    {
+      id: 'overload',
+      name: 'OVERLOAD',
+      desc: 'Crits detonate for splash',
+      needs: [['crit', 3], ['dmg', 3]],
+      color: '#ffe066',
+      apply: (p) => { p.critBurst = true; }
+    },
+    {
+      id: 'bulwark',
+      name: 'BULWARK',
+      desc: 'Damage taken reduced 22%',
+      needs: [['hp', 2], ['regen', 2]],
+      color: '#3bff9e',
+      apply: (p) => { p.armor = 0.22; }
+    },
+    {
+      id: 'hunter',
+      name: 'HUNTER',
+      desc: 'Kills restore 2x health',
+      needs: [['lifesteal', 2], ['magnet', 2]],
+      color: '#a06bff',
+      apply: (p) => { p.leechMul = 2; }
+    },
+    {
+      id: 'railgun',
+      name: 'RAILGUN',
+      desc: 'RAIL: shots pierce terrain-thin',
+      needs: [['railLance', 2], ['railCharge', 2]],
+      color: '#22d3ee',
+      apply: (p) => { p.railSurge = true; }
+    },
+    {
+      id: 'buckshot',
+      name: 'BUCKSHOT',
+      desc: 'SCATTER: pellets ricochet once',
+      needs: [['scatterPellets', 2], ['multi', 2]],
+      color: '#ffd166',
+      apply: (p) => { p.ricochet = 1; }
+    },
+    {
+      id: 'juggernaut',
+      name: 'JUGGERNAUT',
+      desc: 'Dashing burns 50% hotter',
+      needs: [['ram', 2], ['dash', 2]],
+      color: '#ff3b6b',
+      apply: (p) => { p.ramSynergy = 1.5; }
+    }
+  ];
+
+  // Which synergy ids the player currently qualifies for.
+  ND.activeSynergies = function (counts) {
+    const out = [];
+    for (const s of ND.SYNERGIES) {
+      if (s.needs.every((n) => (counts[n[0]] || 0) >= n[1])) out.push(s);
+    }
+    return out;
+  };
+
+  // Re-evaluate synergies and stamp the resulting flags onto the player.
+  // Safe to call every level-up; effects are absolute, not cumulative.
+  ND.applySynergies = function (player, counts) {
+    player.ignite = 0;
+    player.critBurst = false;
+    player.armor = 0;
+    player.leechMul = 1;
+    player.railSurge = false;
+    player.ricochet = 0;
+    player.ramSynergy = 1;
+
+    const active = ND.activeSynergies(counts);
+    for (const s of active) s.apply(player);
+    player.synergies = active;
+    return active;
   };
 
   // =========================================================

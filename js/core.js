@@ -282,6 +282,13 @@ window.ND = window.ND || {};
         case 'boss':
           this.tone(90, 60, 0.7, 'sawtooth', 0.12);
           break;
+        case 'crit':
+          this.tone(1500, 620, 0.12, 'square', 0.05);
+          break;
+        case 'synergy':
+          this.tone(440, 660, 0.12, 'triangle', 0.08);
+          setTimeout(() => this.tone(660, 990, 0.16, 'triangle', 0.08), 110);
+          break;
       }
     }
   }

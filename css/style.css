@@ -424,6 +424,198 @@ kbd {
   color: #3c4e5e;
 }
 
+/* Active set bonuses in the build panel */
+.bsyn-head {
+  margin: 7px 0 4px;
+  padding-top: 6px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  color: #4d6478;
+  border-top: 1px solid rgba(34, 211, 238, 0.12);
+}
+
+.bsyn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #d6ecf8;
+}
+
+.bdot {
+  flex: none;
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.bnext {
+  margin-top: 7px;
+  padding-top: 6px;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: #46596a;
+  border-top: 1px dashed rgba(34, 211, 238, 0.1);
+}
+
+.bnext b { color: #7fa4b8; }
+
+/* Synergy unlock line on an upgrade card */
+.synline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 9px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  border-top: 1px dashed rgba(120, 150, 170, 0.2);
+  animation: synGlow 1.6s ease-in-out infinite;
+}
+
+@keyframes synGlow {
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
+}
+
+/* ---------- Scrap costs ---------- */
+
+.costrow {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 209, 102, 0.16);
+}
+
+.cost {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #ffd166;
+  text-shadow: 0 0 12px rgba(255, 209, 102, 0.45);
+}
+
+.costunit {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #7a6a44;
+}
+
+.costmiss {
+  margin-left: auto;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--pink);
+}
+
+.costrow.short .cost {
+  color: #6b5b3c;
+  text-shadow: none;
+}
+
+/* Unaffordable pick: dimmed but still hoverable so the reason is readable. */
+.card-poor {
+  opacity: 0.55;
+  filter: saturate(0.5);
+}
+
+.card-poor:hover {
+  opacity: 0.85;
+  border-color: rgba(255, 59, 107, 0.55);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 22px rgba(255, 59, 107, 0.22);
+}
+
+.scrap-bank {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #7a6a44;
+}
+
+.scrap-bank .sbnum {
+  font-size: 17px;
+  color: #ffd166;
+  text-shadow: 0 0 14px rgba(255, 209, 102, 0.5);
+}
+
+button.skip {
+  margin-top: 18px;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  opacity: 0.55;
+}
+
+button.skip:hover { opacity: 1; }
+
+/* ---------- Boss specials ---------- */
+
+.specials {
+  position: fixed;
+  left: 16px;
+  bottom: 58px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.spec {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #5c7080;
+  background: rgba(6, 12, 20, 0.78);
+  border: 1px solid rgba(120, 150, 170, 0.16);
+  border-radius: 3px;
+  border-left: 2px solid var(--sc);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.spec .sdot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--sc);
+  opacity: 0.35;
+}
+
+.spec .sname { flex: 1; }
+
+.spec .scd {
+  font-size: 8.5px;
+  color: #46596a;
+  letter-spacing: 0.08em;
+}
+
+.spec.ready {
+  color: #d6ecf8;
+}
+
+.spec.ready .sdot {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--sc);
+}
+
+.spec.ready .scd {
+  color: var(--sc);
+}
+
 .wtag {
   position: absolute;
   top: 10px;

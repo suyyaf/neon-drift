@@ -91,7 +91,7 @@
     const pt = spawnPointAwayFromPlayer();
     const b = ND.spawnEnemy('tank', pt.x, pt.y, game);
     b.boss = true;
-    b.r = 46;
+    b.r = 46 * ND.SHIP_SCALE;
     b.maxHp = 300 + game.wave * 180;
     b.hp = b.maxHp;
     b.speed = 62;
@@ -111,26 +111,195 @@
   }
 
   // ---------------- floating text ----------------
-  function toast(text, color) {
-    game.texts.push({ text, color: color || '#8ef0ff', life: 2.2, maxLife: 2.2, y: 0 });
+  function toast(text, color, small) {
+    // A synergy line is much longer than "WAVE 2", so it gets a smaller size;
+    // otherwise it would run off the edge of the screen.
+    const size = small ? 13 : null;
+    game.texts.push({ text, color: color || '#8ef0ff', life: small ? 2.8 : 2.2, maxLife: small ? 2.8 : 2.2, y: 0, size: size });
   }
 
   function floatText(x, y, text, color) {
     game.texts.push({ text, color, x, y, life: 0.85, maxLife: 0.85, vy: -60, world: true, size: 13 });
   }
 
-  // ---------------- damage / death ----------------
-  function damageEnemy(e, dmg, crit) {
+  // ---------------- specials ----------------
+  // Boss kills hand out these. Once the player holds ND.MAX_SPECIALS, further
+  // bosses pay scrap instead, so late bosses still feel worth killing.
+  function grantSpecial() {
+    const p = game.player;
+    const pool = ND.SPECIALS.filter((s) => p.specials.indexOf(s.id) === -1);
+
+    if (p.specials.length >= ND.MAX_SPECIALS || !pool.length) {
+      const bonus = 150 + game.wave * 25;
+      game.scrap += bonus;
+      toast('SALVAGE +' + bonus + ' SCRAP', '#ffd166', true);
+      return null;
+    }
+
+    const s = pool[ND.randInt(0, pool.length - 1)];
+    p.specials.push(s.id);
+    p.specialCd[s.id] = 0;
+    if (s.id === 'aegis') p.aegis = 1;
+    toast(s.name + ' ACQUIRED // ' + s.desc, s.color, true);
+    ND.audio.play('synergy');
+    updateSpecialBar();
+    return s;
+  }
+
+  // R fires the first ready active special; if none, it cycles nothing.
+  function useSpecial() {
+    const p = game.player;
+    for (const id of p.specials) {
+      const s = ND.SPECIAL_BY_ID[id];
+      if (!s || !s.active) continue;
+      if ((p.specialCd[id] || 0) > 0) continue;
+      s.fire(p, game);
+      p.specialCd[id] = s.cooldown;
+      updateSpecialBar();
+      return true;
+    }
+    return false;
+  }
+
+  // DOM chips under the HUD showing each special and its cooldown.
+  function updateSpecialBar() {
+    const host = $('specials');
+    if (!host) return;
+    const p = game.player;
+    if (!p || !p.specials.length) {
+      host.innerHTML = '';
+      return;
+    }
+    host.innerHTML = p.specials.map((id) => {
+      const s = ND.SPECIAL_BY_ID[id];
+      const cd = p.specialCd[id] || 0;
+      const ready = !s.active || cd <= 0;
+      const label = s.active
+        ? (ready ? 'R' : Math.ceil(cd) + 's')
+        : 'ON';
+      return '<div class="spec' + (ready ? ' ready' : '') + '" style="--sc:' + s.color + '" title="' +
+        s.name + ' — ' + s.desc + '">' +
+        '<span class="sdot"></span>' +
+        '<span class="sname">' + s.name + '</span>' +
+        '<span class="scd">' + label + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Slow-motion field from TIME DILATION: scales enemy movement only.
+  function enemyTimeScale() {
+    return game.slowTime > 0 ? 0.28 : 1;
+  }
+
+  // ORBITAL DRONE: circles the ship and auto-fires at the nearest target.
+  function updateDrone(dt) {
+    const p = game.player;
+    if (p.specials.indexOf('drone') === -1) return;
+    p.droneAngle += dt * 1.9;
+    p.droneCd = Math.max(0, p.droneCd - dt);
+    if (p.droneCd > 0) return;
+
+    const orbit = 52;
+    const dx = p.x + Math.cos(p.droneAngle) * orbit;
+    const dy = p.y + Math.sin(p.droneAngle) * orbit;
+
+    let target = null, bd = 560;
+    for (const e of game.enemies) {
+      const d = ND.dist(dx, dy, e.x, e.y);
+      if (d < bd) { bd = d; target = e; }
+    }
+    if (!target) return;
+
+    p.droneCd = 0.42;
+    const a = Math.atan2(target.y - dy, target.x - dx);
+    game.bullets.push({
+      x: dx, y: dy,
+      vx: Math.cos(a) * 820, vy: Math.sin(a) * 820,
+      r: 3, dmg: p.damage * 0.55, crit: false,
+      pierce: 0, hits: [], life: 0.9,
+      color: '#ffd166', width: 1.4,
+      flak: 0, ignite: 0, burst: false, ricochet: 0, bounced: 0,
+      drone: true
+    });
+  }
+
+  // BLACK HOLE: drags enemies in, then detonates.
+  function updateBlackHole(dt) {
+    const bh = game.blackHole;
+    if (!bh) return;
+    bh.t += dt;
+    bh.life -= dt;
+
+    for (const e of game.enemies) {
+      const dx = bh.x - e.x, dy = bh.y - e.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d > 420) continue;
+      const pull = (1 - d / 420) * 900;
+      e.x += (dx / d) * pull * dt;
+      e.y += (dy / d) * pull * dt;
+      if (Math.random() < dt * 12) {
+        ND.spawnParticles(e.x, e.y, 1, {
+          color: '#ff2b8a', speed: 120, life: 0.3, size: 2
+        });
+      }
+    }
+
+    if (bh.life <= 0) {
+      ND.spawnParticles(bh.x, bh.y, 80, {
+        color: '#ff2b8a', speed: 780, life: 0.7, size: 5, drag: 2
+      });
+      ND.addShake(20);
+      ND.audio.play('explode');
+      for (const e of game.enemies.slice()) {
+        if (ND.dist(bh.x, bh.y, e.x, e.y) < 200 + e.r) {
+          ND.damageEnemy(e, game.player.damage * 6, false);
+        }
+      }
+      game.blackHole = null;
+    }
+  }
+
+  function damageEnemy(e, dmg, crit, silent) {
     e.hp -= dmg;
     e.flash = 1;
     if (e.hp <= 0) {
       killEnemy(e);
-    } else {
+    } else if (!silent) {
       ND.audio.play('hit');
       ND.spawnParticles(e.x, e.y, 4, {
         color: e.color, speed: 180, life: 0.3, size: 2.5
       });
       if (crit) floatText(e.x, e.y - e.r, Math.round(dmg), '#ffe066');
+    }
+  }
+
+  // Exposed so specials (and any future ability) can damage through the one
+  // real code path, keeping kills, scrap and particle FX consistent.
+  ND.damageEnemy = damageEnemy;
+  ND.igniteEnemy = igniteEnemy;
+  ND.grantSpecial = grantSpecial;
+  ND.useSpecial = useSpecial;
+
+  // Apply a burn stack. Burn deals damage over time through damageEnemy so it
+  // can finish an enemy off, and it refreshes rather than stacking infinitely.
+  function igniteEnemy(e, dps, time) {
+    if (!e || e.hp <= 0) return;
+    e.burn = Math.max(e.burn || 0, dps);
+    e.burnTimer = Math.max(e.burnTimer || 0, time || 2.2);
+  }
+
+  // OVERLOAD: a crit sends a small shockwave into everything nearby.
+  function critBurst(e, dmg) {
+    const radius = 70;
+    ND.spawnParticles(e.x, e.y, 22, {
+      color: '#ffe066', speed: 420, life: 0.45, size: 3.4, drag: 2
+    });
+    ND.audio.play('crit');
+    for (let i = game.enemies.length - 1; i >= 0; i--) {
+      const o = game.enemies[i];
+      if (o === e) continue;
+      if (ND.dist(o.x, o.y, e.x, e.y) > radius + o.r) continue;
+      damageEnemy(o, dmg * 0.55, false);
     }
   }
 
@@ -162,8 +331,9 @@
     ND.addShake(e.boss ? 22 : 3);
 
     if (!kamikaze && p.lifesteal > 0) {
-      p.hp = Math.min(p.maxHp, p.hp + p.lifesteal);
-      floatText(e.x, e.y - e.r - 8, '+' + Math.round(p.lifesteal), '#3bff9e');
+      const heal = p.lifesteal * p.leechMul;
+      p.hp = Math.min(p.maxHp, p.hp + heal);
+      floatText(e.x, e.y - e.r - 8, '+' + Math.round(heal), '#3bff9e');
     }
 
     if (kamikaze) {
@@ -172,6 +342,16 @@
         toast('SINGULARITY COLLAPSED', '#ffb020');
       }
       return;
+    }
+
+    // Scrap is the upgrade currency: every kill pays out.
+    if (!kamikaze) {
+      const gain = ND.scrapValue(e);
+      game.scrap += gain;
+      game.scrapGain = Math.min(1, (game.scrapGain || 0) + 0.28);
+      if (e.boss) {
+        grantSpecial();
+      }
     }
 
     // xp orbs
@@ -191,7 +371,7 @@
       for (let i = 0; i < e.splits; i++) {
         const a = (i / e.splits) * TAU;
         const child = ND.spawnEnemy('chaser', e.x + Math.cos(a) * 30, e.y + Math.sin(a) * 30, game);
-        child.r = 10;
+        child.r = 10 * ND.SHIP_SCALE;
         child.maxHp = child.hp = e.maxHp * 0.16;
         child.xp = 1;
         child.speed *= 1.25;
@@ -220,6 +400,31 @@
     }
 
     p.update(dt, game);
+
+    // ---- specials ----
+    if (game.slowTime > 0) game.slowTime = Math.max(0, game.slowTime - dt);
+    for (const id in p.specialCd) {
+      if (p.specialCd[id] > 0) p.specialCd[id] = Math.max(0, p.specialCd[id] - dt);
+    }
+    if (p.specials.indexOf('aegis') !== -1 && p.aegis <= 0) {
+      p.aegisTimer -= dt;
+      if (p.aegisTimer <= 0) {
+        p.aegis = 1;
+        ND.spawnParticles(p.x, p.y, 12, {
+          color: '#3bff9e', speed: 220, life: 0.45, size: 2.6, drag: 2
+        });
+      }
+    }
+    updateDrone(dt);
+    updateBlackHole(dt);
+    if (game.novaFx) {
+      game.novaFx.life -= dt;
+      if (game.novaFx.life <= 0) game.novaFx = null;
+    }    if (p.specials.length) updateSpecialBar();
+
+    if (game.state === 'playing') {
+      game.scrapGain = Math.max(0, (game.scrapGain || 0) - dt * 2.2);
+    }
 
     // waves
     game.waveTimer += dt;
@@ -252,7 +457,22 @@
     // enemies
     for (let i = game.enemies.length - 1; i >= 0; i--) {
       const e = game.enemies[i];
-      ND.updateEnemy(e, dt, game);
+      // TIME DILATION slows hostile movement without slowing bullets or you.
+      ND.updateEnemy(e, dt * enemyTimeScale(), game);
+
+      // INCENDIARY synergy: burn damage ticks through the normal damage path.
+      if (e.burnTimer > 0) {
+        e.burnTimer -= dt;
+        damageEnemy(e, e.burn * dt, false, true);
+        if (e.burnTimer <= 0) e.burn = 0;
+        // Burned enemies shed embers so the effect reads on screen.
+        if (Math.random() < dt * 18) {
+          ND.spawnParticles(e.x + ND.rand(-6, 6), e.y + ND.rand(-6, 6), 1, {
+            color: '#ff8a3c', speed: 60, life: 0.4, size: 2, drag: 2
+          });
+        }
+        if (e.hp <= 0) continue;   // burned to death; killEnemy already ran
+      }
 
       // ---------------- contact / ram ----------------
       const rr = p.r + e.r;
@@ -274,7 +494,7 @@
 
         if (dashing || p.invuln > 0) {
           // RAM: an invulnerable ship burns whatever touches it.
-          const ramMul = (dashing ? 3.4 : 0.7) * p.ramMul;
+          const ramMul = (dashing ? 3.4 : 0.7) * p.ramMul * (dashing ? p.ramSynergy : 1);
           e.knockX += nx * (dashing ? 620 : 300);
           e.knockY += ny * (dashing ? 620 : 300);
 
@@ -364,6 +584,11 @@
           if (b.hits.indexOf(e) !== -1) continue;
           if (ND.dist(b.x, b.y, e.x, e.y) < e.r + b.r) {
             damageEnemy(e, b.dmg, b.crit);
+
+            // Synergies: burn on hit, and a crit shockwave.
+            if (b.ignite > 0 && e.hp > 0) igniteEnemy(e, b.dmg * b.ignite, 2.2);
+            if (b.burst && e.hp > 0) critBurst(e, b.dmg);
+
             ND.spawnParticles(b.x, b.y, 5, {
               color: b.crit ? '#ffe066' : '#bff6ff', speed: 240, life: 0.25, size: 2.4
             });
@@ -386,9 +611,28 @@
                   life: 0.3,
                   color: '#bff6ff',
                   width: 1.1,
-                  flak: 0
+                  flak: 0,
+                  ignite: 0,
+                  burst: false,
+                  ricochet: 0,
+                  bounced: 0
                 });
               }
+            }
+
+            // BUCKSHOT synergy: scatter pellets bounce off what they hit once.
+            if (b.ricochet > 0 && b.bounced < b.ricochet) {
+              b.bounced++;
+              b.hits = [];              // fresh hit list so it can bite again
+              const ra = Math.atan2(b.vy, b.vx) + Math.PI + ND.rand(-0.5, 0.5);
+              const rs = Math.hypot(b.vx, b.vy) * 0.85;
+              b.vx = Math.cos(ra) * rs;
+              b.vy = Math.sin(ra) * rs;
+              b.x += Math.cos(ra) * 6;
+              b.y += Math.sin(ra) * 6;
+              b.life = Math.max(b.life, 0.35);
+              b.dmg *= 0.7;
+              break;                    // bullet survives; stop checking hits
             }
 
             if (b.pierce > 0) {
@@ -640,6 +884,15 @@
     ctx.font = '700 11px ui-monospace, monospace';
     ctx.fillText('LV ' + p.level, bx, yb + 20);
 
+    // scrap bank — the upgrade currency
+    ctx.textAlign = 'left';
+    ctx.font = '700 11px ui-monospace, monospace';
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = '#ffd166';
+    ctx.shadowBlur = game.scrapGain > 0.02 ? 14 : 0;
+    ctx.fillText(game.scrap + ' SCRAP', bx + 68, yb + 20);
+    ctx.shadowBlur = 0;
+
     // right side stats
     ctx.textAlign = 'right';
     ctx.fillStyle = '#dff8ff';
@@ -698,8 +951,11 @@
         // already inside the camera transform
         ctx.fillText(t.text, t.x, t.y);
       } else {
-        ctx.font = '800 ' + Math.min(26, 14 + t.maxLife * 3) + 'px ui-monospace, monospace';
-        ctx.fillText(t.text, camX + ND.view.w / 2, camY + ND.view.h * 0.24 + (t.maxLife - t.life) * 4);
+        const size = t.size || Math.min(26, 14 + t.maxLife * 3);
+        ctx.font = '800 ' + size + 'px ui-monospace, monospace';
+        // Keep the banner clear of the boss health bar overhead.
+        const y = camY + ND.view.h * 0.24 + (t.maxLife - t.life) * 4;
+        ctx.fillText(t.text, camX + ND.view.w / 2, y);
       }
     }
     ctx.globalAlpha = 1;
@@ -747,8 +1003,90 @@
     // bullets
     for (const b of game.bullets) drawBullet(ctx, b);
 
+    // ---- special effects, under the ship ----
+    // BLACK HOLE: a dark core with a spinning accretion ring.
+    if (game.blackHole) {
+      const bh = game.blackHole;
+      const t = performance.now() / 1000;
+      ctx.save();
+      const g2 = ctx.createRadialGradient(bh.x, bh.y, 2, bh.x, bh.y, 120);
+      g2.addColorStop(0, 'rgba(0,0,0,0.95)');
+      g2.addColorStop(0.5, 'rgba(255,43,138,0.35)');
+      g2.addColorStop(1, 'rgba(255,43,138,0)');
+      ctx.fillStyle = g2;
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, 120, 0, TAU);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ff2b8a';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#ff2b8a';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, 26 + Math.sin(t * 9) * 4, 0, TAU);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, 46, t * 3, t * 3 + 2.2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // NOVA: an expanding shockwave ring.
+    if (game.novaFx) {
+      const n = game.novaFx;
+      const k = 1 - n.life / 0.5;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - k);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 10 * (1 - k) + 1;
+      ctx.shadowColor = '#22d3ee';
+      ctx.shadowBlur = 24;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.max * k, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ORBITAL DRONE
+    const pl = game.player;
+    if (pl && pl.specials && pl.specials.indexOf('drone') !== -1) {
+      const orbit = 52;
+      const dx = pl.x + Math.cos(pl.droneAngle) * orbit;
+      const dy = pl.y + Math.sin(pl.droneAngle) * orbit;
+      ctx.save();
+      ctx.fillStyle = '#ffd166';
+      ctx.shadowColor = '#ffd166';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(dx, dy, 5, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,209,102,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(pl.x, pl.y, orbit, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // player
-    if (game.state === 'playing' || game.state === 'paused') game.player.draw(ctx);
+    if (game.state === 'playing' || game.state === 'paused') {
+      game.player.draw(ctx);
+
+      // AEGIS shield bubble while charged.
+      if (game.player.aegis > 0) {
+        ctx.save();
+        const t = performance.now() / 700;
+        ctx.strokeStyle = 'rgba(59,255,158,' + (0.45 + Math.sin(t) * 0.18) + ')';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = '#3bff9e';
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.arc(game.player.x, game.player.y, game.player.r + 14, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     // particles
     ND.drawParticles(ctx, camX, camY);
@@ -817,9 +1155,21 @@
       const lvl = game.upgradeCounts[up.id] || 0;
       const nextLvl = lvl + 1;
       const maxed = up.max && nextLvl >= up.max;
+      const cost = ND.upgradeCost(up, game.buys || 0);
+      const afford = game.scrap >= cost;
 
       const el = document.createElement('div');
-      el.className = 'card' + (up.weapon ? ' card-weapon' : '') + (maxed ? ' card-maxed' : '');
+      el.className = 'card' + (up.weapon ? ' card-weapon' : '') +
+        (maxed ? ' card-maxed' : '') + (afford ? '' : ' card-poor');
+
+      // Would this pick complete a synergy? Preview the flags without
+      // touching the real player, so the card can advertise the unlock.
+      const preview = Object.assign({}, game.upgradeCounts);
+      preview[up.id] = (preview[up.id] || 0) + 1;
+      const nowActive = (game.player.synergies || []).map((s) => s.id);
+      const unlocked = ND.activeSynergies(preview)
+        .filter((s) => nowActive.indexOf(s.id) === -1);
+
       el.innerHTML =
         '<span class="key">' + (i + 1) + '</span>' +
         '<div class="glyph">' + ND.iconSvg(up.icon, 26) + '</div>' +
@@ -830,12 +1180,30 @@
           '<span class="lvlabel">' + (lvl === 0 ? 'NEW' : 'LV ' + lvl + ' → ' + nextLvl) + '</span>' +
           renderPips(lvl, up.max) +
           (maxed ? '<span class="maxtag">MAX</span>' : '') +
-        '</div>';
+        '</div>' +
+        '<div class="costrow' + (afford ? '' : ' short') + '">' +
+          '<span class="cost">' + cost + '</span>' +
+          '<span class="costunit">SCRAP</span>' +
+          (afford ? '' : '<span class="costmiss">need ' + (cost - game.scrap) + '</span>') +
+        '</div>' +
+        unlocked.map((s) =>
+          '<div class="synline" style="color:' + s.color + '">' +
+            '<span class="bdot" style="background:' + s.color + ';box-shadow:0 0 7px ' + s.color + '"></span>' +
+            'UNLOCKS ' + s.name +
+          '</div>'
+        ).join('');
       el.addEventListener('click', () => chooseUpgrade(up));
       container.appendChild(el);
     });
 
+    // Live scrap readout so it's obvious why a card is dimmed.
+    const bank = $('scrapBank');
+    if (bank) bank.innerHTML = '<span class="sbnum">' + game.scrap + '</span> SCRAP';
+
     game.currentPicks = picks;
+    // The upgrade overlay is full-width; the tracker would sit on top of the
+    // third card, so it steps aside until the pick is made.
+    setBuildVisible(false);
     $('upgrade').classList.remove('hidden');
   }
 
@@ -901,7 +1269,52 @@
       html += '<div class="bmore">+' + rest + ' MORE</div>';
     }
 
+    // Active set bonuses, with the requirement pips filled in.
+    const active = game.player.synergies || [];
+    if (active.length) {
+      html += '<div class="bsyn-head">SYNERGY</div>';
+      html += active.map((s) =>
+        '<div class="bsyn" title="' + s.desc + '">' +
+          '<span class="bdot" style="background:' + s.color + ';box-shadow:0 0 7px ' + s.color + '"></span>' +
+          '<span class="bname">' + s.name + '</span>' +
+        '</div>'
+      ).join('');
+    } else {
+      // Nudge: show the closest synergy so the system is discoverable.
+      const next = closestSynergy();
+      if (next) {
+        html += '<div class="bnext" title="' + next.syn.desc + '">' +
+          'NEXT SET · ' + next.syn.name + ' <b>' + next.have + '/' + next.need + '</b>' +
+        '</div>';
+      }
+    }
+
     host.innerHTML = html;
+  }
+
+  // The synergy the player is closest to unlocking, used as a discoverability
+  // hint in the build panel before any set is active.
+  function closestSynergy() {
+    let best = null;
+    for (const syn of ND.SYNERGIES) {
+      // Progress is gated by the weakest requirement in the pair.
+      let worst = syn.needs[0];
+      let ratio = 1;
+      for (const [id, req] of syn.needs) {
+        const r = Math.min(game.upgradeCounts[id] || 0, req) / req;
+        if (r < ratio) { ratio = r; worst = [id, req]; }
+      }
+      if (ratio <= 0) continue;
+      if (!best || ratio > best.ratio) {
+        best = {
+          syn: syn,
+          ratio: ratio,
+          have: Math.min(game.upgradeCounts[worst[0]] || 0, worst[1]),
+          need: worst[1]
+        };
+      }
+    }
+    return best;
   }
 
   function setBuildVisible(on) {
@@ -913,16 +1326,68 @@
 
   function chooseUpgrade(up) {
     if (game.state !== 'upgrade') return;
+
+    // Upgrades are bought with scrap farmed from kills, so a pick can be
+    // refused if the bank is short. The card stays on screen.
+    const lvlBefore = game.upgradeCounts[up.id] || 0;
+    const cost = ND.upgradeCost(up, game.buys || 0);
+    if (game.scrap < cost) {
+      ND.audio.play('switch');
+      toast('NOT ENOUGH SCRAP // NEED ' + (cost - game.scrap) + ' MORE', '#ff3b6b', true);
+      return;
+    }
+    game.scrap -= cost;
+    game.spent = (game.spent || 0) + cost;
+    game.buys = (game.buys || 0) + 1;
+
     up.apply(game.player);
-    game.upgradeCounts[up.id] = (game.upgradeCounts[up.id] || 0) + 1;
+    game.upgradeCounts[up.id] = lvlBefore + 1;
+
+    // Synergies are recomputed from scratch so a level-up can never double
+    // apply a bonus, and losing the flags on reset is automatic.
+    const before = new Set((game.player.synergies || []).map((s) => s.id));
+    const active = ND.applySynergies(game.player, game.upgradeCounts);
+    const fresh = active.filter((s) => !before.has(s.id));
+    if (fresh.length) {
+      // Surface the strongest unlock first; a doubled toast would just be
+      // overwritten by the single toast slot anyway.
+      const s = fresh[fresh.length - 1];
+      toast(s.name + ' // ' + s.desc, s.color, true);
+      ND.audio.play('synergy');
+    }
+
     renderBuild();
     game.pendingLevels--;
     $('upgrade').classList.add('hidden');
 
     if (game.pendingLevels > 0) {
+      // If the next pick is unaffordable too, hold the level in the bank
+      // instead of reopening a screen the player can't act on.
       openUpgrades();
     } else {
       game.state = 'playing';
+      setBuildVisible(true);
+      last = performance.now();
+      ND.mouse.down = false;
+    }
+  }
+
+  // Bank the pending level without buying: the level-up is refunded as scrap
+  // so an unaffordable screen never becomes a dead end.
+  function bankLevel() {
+    if (game.state !== 'upgrade' || game.pendingLevels <= 0) return;
+    const refund = 6 + game.wave * 2;
+    game.scrap += refund;
+    game.pendingLevels--;
+    $('upgrade').classList.add('hidden');
+    toast('LEVEL BANKED +' + refund + ' SCRAP', '#ffd166', true);
+    ND.audio.play('pickup');
+
+    if (game.pendingLevels > 0) {
+      openUpgrades();
+    } else {
+      game.state = 'playing';
+      setBuildVisible(true);
       last = performance.now();
       ND.mouse.down = false;
     }
@@ -935,6 +1400,12 @@
     const n = parseInt(e.key, 10);
     if (game.state === 'upgrade' && n >= 1 && n <= 3 && game.currentPicks) {
       chooseUpgrade(game.currentPicks[n - 1]);
+    }
+    if (game.state === 'upgrade' && (e.key === 'b' || e.key === 'B')) {
+      bankLevel();
+    }
+    if (game.state === 'playing' && (e.key === 'r' || e.key === 'R')) {
+      useSpecial();
     }
     if (game.state === 'playing' && (e.key === 'q' || e.key === 'Q')) {
       game.player.cycleWeapon(-1);
@@ -1089,7 +1560,15 @@
     game.streakTimer = 0;
     game.currentPicks = null;
     game.upgradeCounts = {};
+    game.scrap = 0;
+    game.spent = 0;
+    game.buys = 0;
+    game.scrapGain = 0;
+    game.slowTime = 0;
+    game.blackHole = null;
+    game.novaFx = null;
     renderBuild();
+    updateSpecialBar();
     ND.shake = 0;
     game.camX = game.player.x - ND.view.w / 2;
     game.camY = game.player.y - ND.view.h / 2;
@@ -1146,6 +1625,7 @@
     hideAllOverlays();
     $('hudbar').classList.add('hidden');
     setBuildVisible(false);
+    if ($('specials')) $('specials').innerHTML = '';
     clearWorld();
     showMenuBest();
     ND.music.intensity = 1;
@@ -1160,7 +1640,11 @@
     game.texts.length = 0;
     game.pendingLevels = 0;
     game.boss = null;
+    game.blackHole = null;
+    game.novaFx = null;
+    game.slowTime = 0;
     ND.particles.length = 0;
+    updateSpecialBar();
   }
 
   function die() {
@@ -1176,6 +1660,7 @@
 
     $('hudbar').classList.add('hidden');
     setBuildVisible(false);
+    if ($('specials')) $('specials').innerHTML = '';
 
     $('finalStats').innerHTML =
       '<div>TIME SURVIVED &nbsp;<b>' + Math.round(game.time) + 's</b></div>' +
@@ -1286,6 +1771,10 @@
     else if (game.state === 'paused') resumeGame();
   });
   $('btnStop').addEventListener('click', stopGame);
+  $('btnSkip').addEventListener('click', (e) => {
+    e.stopPropagation();
+    bankLevel();
+  });
 
   // Sound toggle: mutes music and sfx together, remembered between sessions.
   let muted = false;
