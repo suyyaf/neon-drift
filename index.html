@@ -26,9 +26,10 @@
 
   <!-- IN-GAME CONTROL BAR -->
   <div id="hudbar" class="hudbar hidden">
-    <button id="btnPause" class="chip" type="button">PAUSE</button>
-    <button id="btnStop" class="chip danger" type="button">STOP</button>
-    <button id="btnMute" class="chip" type="button" aria-label="Toggle sound">SOUND ON</button>
+    <button id="btnPause" class="chip" type="button" title="Pause (Esc)" aria-label="Pause the run">PAUSE</button>
+    <button id="btnSpend" class="chip" type="button" title="Spend scrap (T)" aria-label="Spend scrap on upgrades">UPGRADE</button>
+    <button id="btnMute" class="chip" type="button" aria-label="Toggle sound" aria-pressed="false">SOUND ON</button>
+    <button id="btnStop" class="chip danger" type="button" title="Abandon this run" aria-label="Stop the run and return to the menu">STOP</button>
   </div>
 
   <!-- START -->
@@ -51,7 +52,8 @@
     <div class="controls">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</div>
       <div><kbd>MOUSE</kbd> aim &nbsp;·&nbsp; <kbd>HOLD LMB</kbd> fire</div>
-      <div><kbd>SPACE</kbd> dash &nbsp;·&nbsp; <kbd>Q</kbd><kbd>E</kbd> swap weapon &nbsp;·&nbsp; <kbd>ESC</kbd> pause</div>
+      <div><kbd>SPACE</kbd> dash &nbsp;·&nbsp; <kbd>Q</kbd><kbd>E</kbd> swap weapon</div>
+      <div><kbd>T</kbd> spend scrap &nbsp;·&nbsp; <kbd>ESC</kbd> pause &nbsp;·&nbsp; <kbd>M</kbd> mute</div>
     </div>
     <button id="play">enter the grid</button>
   </div>

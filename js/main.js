@@ -948,13 +948,23 @@
     ctx.font = '700 11px ui-monospace, monospace';
     ctx.fillText('LV ' + p.level, bx, yb + 20);
 
+    // Next free pick, on its own line to the right of the scrap readout. Derived
+    // from the same rule as gainXp(): picks land on levels 2, 5, 8, 11...
+    // A queued pick takes priority so the label never says "IN 3" while a card
+    // is already waiting.
+    const nextPick = p.level < 2 ? 2 : p.level - ((p.level - 2) % ND.UPGRADE_EVERY) + ND.UPGRADE_EVERY;
+    const toGo = nextPick - p.level;
+    const pickReady = game.pendingLevels > 0;
+    ctx.font = '700 10px ui-monospace, monospace';
+    ctx.fillStyle = pickReady ? '#3bff9e' : '#6b5b8f';
+    ctx.fillText(pickReady ? 'PICK READY' : 'PICK IN ' + toGo, bx, yb + 34);
     // scrap bank — the upgrade currency
     ctx.textAlign = 'left';
     ctx.font = '700 11px ui-monospace, monospace';
     ctx.fillStyle = '#ffd166';
     ctx.shadowColor = '#ffd166';
     ctx.shadowBlur = game.scrapGain > 0.02 ? 14 : 0;
-    ctx.fillText(game.scrap + ' SCRAP', bx + 68, yb + 20);
+    ctx.fillText('⬥ ' + game.scrap + ' SCRAP', bx + 62, yb + 20);
     ctx.shadowBlur = 0;
 
     // right side stats
@@ -1354,13 +1364,25 @@
 
     game.currentPicks = picks;
     // The overlay header and its button reflect which mode we are in: a real
-    // level-up, or a free scrap purchase.
+    // level-up, or a free scrap purchase. When several picks arrived at once
+    // (one fat XP clump can cross two thresholds in a single frame) the header
+    // says so, so back-to-back screens read as one drafting session rather than
+    // three surprise interruptions.
     const title = $('upgrade').querySelector('h2');
     const sub = $('upgrade').querySelector('p');
     const skip = $('btnSkip');
+    const queued = free ? 0 : game.pendingLevels;
     if (title) title.textContent = free ? 'spend scrap' : 'level up';
-    if (sub) sub.textContent = free ? 'buy an upgrade with banked scrap' : 'spend scrap on an upgrade';
-    if (skip) skip.textContent = free ? 'back to the fight' : 'bank the level';
+    if (sub) {
+      sub.textContent = free
+        ? 'buy an upgrade with banked scrap'
+        : (queued > 1 ? queued + ' upgrades earned — pick one' : 'spend scrap on an upgrade');
+    }
+    if (skip) {
+      skip.textContent = free
+        ? 'back to the fight'
+        : (queued > 1 ? 'bank the level (' + queued + ' left)' : 'bank the level');
+    }
 
     // The upgrade overlay is full-width; the tracker would sit on top of the
     // third card, so it steps aside until the pick is made.
@@ -1397,6 +1419,7 @@
 
     if (!rows.length) {
       host.innerHTML = '<div class="bempty">NO MODULES<br>INSTALLED</div>';
+      renderBuildHead();
       return;
     }
 
@@ -1451,6 +1474,7 @@
     }
 
     host.innerHTML = html;
+    renderBuildHead();
   }
 
   // The synergy the player is closest to unlocking, used as a discoverability
@@ -1476,6 +1500,28 @@
       }
     }
     return best;
+  }
+
+  // The tracker is clickable so a long build can be folded away mid-fight; the
+  // collapsed state is remembered for the session.
+  let buildCollapsed = false;
+
+  function renderBuildHead() {
+    const head = document.querySelector('#build .build-head');
+    if (!head) return;
+    const count = Object.keys(game.upgradeCounts || {}).length;
+    head.innerHTML = '<span class="btitle">BUILD' + (count ? ' · ' + count : '') + '</span>' +
+      '<span class="bchevlbl">' + (buildCollapsed ? 'SHOW' : 'HIDE') + '</span>';
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    head.setAttribute('aria-expanded', String(!buildCollapsed));
+  }
+
+  function setBuildCollapsed(on) {
+    buildCollapsed = !!on;
+    const el = $('build');
+    if (el) el.classList.toggle('collapsed', buildCollapsed);
+    renderBuildHead();
   }
 
   function setBuildVisible(on) {
@@ -1924,6 +1970,9 @@
     hideAllOverlays();
     $('hudbar').classList.remove('hidden');
     setBuildVisible(true);
+    // Paint the tracker now; otherwise an empty build shows stale markup until
+    // the first purchase.
+    renderBuild();
     ND.music.intensity = 1;
     ND.music.play('track');
     toast('WAVE 1 // ENGAGE', '#22d3ee');
@@ -1940,6 +1989,10 @@
     ND.mouse.down = false;
     if (ND.music.ctx) ND.music.ctx.suspend();
     $('pause').classList.remove('hidden');
+    // The pause overlay owns the screen; the in-run panels would just show
+    // through it at different opacities.
+    $('hudbar').classList.add('hidden');
+    setBuildVisible(false);
   }
 
   function resumeGame() {
@@ -1948,6 +2001,8 @@
     if (ND.music.ctx) ND.music.ctx.resume();
     last = performance.now();
     $('pause').classList.add('hidden');
+    $('hudbar').classList.remove('hidden');
+    setBuildVisible(true);
   }
 
   // Stop the run and return to the title screen (also clears the field).
@@ -2121,6 +2176,20 @@
     else if (game.state === 'paused') resumeGame();
   });
   $('btnStop').addEventListener('click', stopGame);
+
+  // Build tracker: click the header (or press B on it) to fold the panel away.
+  const buildHead = document.querySelector('#build .build-head');
+  if (buildHead) {
+    buildHead.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setBuildCollapsed(!buildCollapsed);
+    });
+    buildHead.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setBuildCollapsed(!buildCollapsed); }
+    });
+  }
+  renderBuildHead();
+
   $('btnSkip').addEventListener('click', (e) => {
     e.stopPropagation();
     bankLevel();
@@ -2137,9 +2206,18 @@
     if (btn) {
       btn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
       btn.classList.toggle('is-off', muted);
+      btn.setAttribute('aria-pressed', String(muted));
+      btn.setAttribute('aria-label', muted ? 'Sound is off. Turn sound on' : 'Sound is on. Mute sound');
     }
     try { localStorage.setItem('neondrift.muted.v1', muted ? '1' : '0'); } catch (e) { /* ignore */ }
   }
+
+  // UPGRADE button mirrors the T key, so the shop is discoverable without
+  // reading the controls list.
+  $('btnSpend').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSpend();
+  });
 
   $('btnMute').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -2161,8 +2239,7 @@
   $('btnResume').addEventListener('click', (e) => {
     e.stopPropagation();
     resumeGame();
-  });
-  $('btnEnd').addEventListener('click', (e) => {
+  });  $('btnEnd').addEventListener('click', (e) => {
     e.stopPropagation();
     stopGame();
   });

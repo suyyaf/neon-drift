@@ -328,16 +328,26 @@
     return true;
   };
 
+  // A level-up is not automatically a pick. The shop re-opens every N levels
+  // (starting at level 2) so a single fat XP clump cannot dump six cards in two
+  // seconds — one measured run opened the screen 10 times in 90 seconds, six of
+  // them inside 2 seconds. Scrap spending is unaffected: T opens the same shop
+  // at any time, so fewer auto-opens costs no power.
+  ND.UPGRADE_EVERY = 3;
+
   ND.Player.prototype.gainXp = function (amount, game) {
     this.xp += amount;
     while (this.xp >= this.xpNext) {
       this.xp -= this.xpNext;
       this.level++;
-      // 1.28 grows more gently than the old 1.34, so level-ups keep arriving
-      // roughly once or twice a wave instead of stalling at ~13 and leaving the
-      // rest of the run without power spikes.
-      this.xpNext = Math.round(this.xpNext * 1.28 + 4);
-      game.pendingLevels++;
+      // Multiplicative XP growth outran the (roughly linear) supply of orbs and
+      // stalled progression around level 13, leaving hundreds of scrap stranded.
+      // The curve still climbs but is capped at 250, so levels keep arriving and
+      // the run never runs out of power spikes.
+      this.xpNext = Math.min(250, Math.round(this.xpNext * 1.28 + 4));
+      if ((this.level - 2) % ND.UPGRADE_EVERY === 0) {
+        game.pendingLevels++;
+      }
     }
   };
 

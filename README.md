@@ -48,14 +48,22 @@ python -m http.server 8123
 | `T` | Open the upgrade screen to spend banked scrap |
 | `M` | Mute / unmute sound |
 | `Esc` | Pause / resume |
+| `B` (in a draft) | Bank the level for scrap |
+| `1` `2` `3` (in a draft) | Buy an upgrade |
 
 The game **auto-pauses** when the window loses focus or the tab is hidden, so a
 run never continues unseen.
 
-| `1` `2` `3` | Buy an upgrade on level up |
+| `1` `2` `3` | Buy an upgrade in a draft |
 | `B` | Bank the level for scrap instead (or close the scrap screen) |
 
-On-screen buttons: **PAUSE** / **STOP** bottom-left during a run; **RESUME** / **END RUN** on the pause screen; **RUN IT BACK** / **MAIN MENU** after death.
+On-screen buttons, bottom-left during a run: **PAUSE** (Esc), **UPGRADE** (opens
+the scrap shop, same as `T`), **SOUND ON/OFF** (turns red when muted), **STOP**
+(abandons the run). The pause screen has **RESUME** / **END RUN**; death offers
+**RUN IT BACK** / **MAIN MENU**.
+
+The **BUILD** tracker bottom-right can be folded away by clicking its header
+(`HIDE` / `SHOW`). Both the control bar and the tracker are hidden while paused.
 
 ## Weapons
 
@@ -176,19 +184,40 @@ itself on load.
 ## Upgrades and build tracker
 
 Upgrades are bought with **scrap**, earned from every kill (`score / 5`; tough
-enemies pay more, bosses pay 120). Level-ups pause the game and offer three
-picks, but you can only take one you can afford:
+enemies pay more, bosses pay 120). The draft screen offers three picks, but you
+can only take one you can afford:
 
 - The card shows its price and your bank at the top of the screen.
 - Unaffordable cards are dimmed with the shortfall in red (`need 35`).
-- **BANK THE LEVEL** (or `B`) refunds scrap instead, so a level-up is never a
+- **BANK THE LEVEL** (or `B`) refunds scrap instead, so a draft is never a
   dead end.
 
-Price scales with **how many upgrades you have already bought** (`10 + buys * 7`,
-×1.5 for weapon upgrades), not with an upgrade's own level. That makes spreading
-thin no cheaper than going deep — farming is what buys power. In testing roughly
-90% of earned scrap converted into upgrades, which keeps the economy tight but
-never starving.
+### When the draft opens
+
+A level-up does **not** open the shop every time. Picks land every **3 levels**,
+starting at level 2 (levels 2, 5, 8, 11…). The HUD shows a live `PICK IN n`
+countdown next to your scrap.
+
+Two measurements drove that rule:
+
+- One run opened the upgrade screen **10 times in 90 seconds**, six of them
+  from a single fat XP clump that crossed levels 5→11 in under two seconds.
+  Back-to-back screens with no fighting between them feel like a bug, not a
+  reward.
+- The XP curve was purely multiplicative, so it outran the roughly linear
+  supply of orbs and stalled progress near level 13 — stranding hundreds of
+  scrap. It is now capped at `250` XP per level, which keeps levels arriving
+  all run (the cap is hit around level 12).
+
+`T` is the pressure valve: it opens the same shop at any time and spends banked
+scrap, so a slower auto-open cadence costs no power. In a 5-minute bot run the
+build came mostly from voluntary `T` purchases (25 buys against 10 level picks).
+
+Price scales with **how many upgrades you have already bought**
+(`10 + buys^1.42 * 6`, ×1.5 for weapon upgrades), not with an upgrade's own
+level. That makes spreading thin no cheaper than going deep — farming is what
+buys power. In testing roughly 90% of earned scrap converted into upgrades,
+which keeps the economy tight but never starving.
 
 Every upgrade has an icon, a level readout, and pips showing progress toward its
 cap. Cards badge `NEW` on first acquisition and `MAX` (green) when a pick
@@ -196,7 +225,8 @@ completes the upgrade. Capped upgrades leave the offer pool so a build converges
 
 A **BUILD** panel sits bottom-right during play, ranked by completion. Icons are
 tinted cyan, weapon upgrades amber, maxed modules green. Past 9 entries it
-collapses into `+n MORE`. Active set bonuses are listed under `SYNERGY`.
+collapses into `+n MORE`. Active set bonuses are listed under `SYNERGY`. Click
+the header to fold the whole panel down to a single line mid-fight.
 
 All icons are inline SVG path data in `js/icons.js` (`ND.iconSvg(id, size)`).
 
@@ -296,9 +326,22 @@ Other knobs that matter:
 
 There is no test runner; balance was measured by driving the real game loop in a
 browser with a kiting bot (aim at the nearest enemy, flee when crowded, dash when
-surrounded, buy the strongest affordable card) and sampling state once a second.
+surrounded, buy the strongest affordable card, spend banked scrap with `T`
+between drafts) and sampling state once a second.
 
-The bot is deliberately competent but not superhuman: it clears wave 12 while
-rarely dropping below 80 hull, which is the intended "you can go deep if you play
-well" ceiling. A human who does not kite should die much earlier.
+The bot is deliberately competent but not superhuman. A representative run under
+the current pacing (`1-in-3` drafts, 250 XP cap) reached **wave 16 in 5 minutes**,
+never dropping below **49% hull**, with damage per second climbing
+83 → 222 (wave 3) → 380 (wave 8) → 822 (wave 16). That is the intended "you can
+go deep if you play well" ceiling; a human who does not kite should die much
+earlier.
+
+Notable finding from that run: of 25 purchases, only 10 came from level picks —
+the other 15 were voluntary `T` spends. Cutting the auto-open cadence therefore
+costs far less power than the pick count alone suggests, because scrap keeps
+buying upgrades between drafts.
+
+Enemy health scales geometrically (`1.175^(wave-1)`, bosses `420 * 1.175^(wave-1)`)
+rather than linearly, so wave 20 stays threatening: time-to-kill on a basic
+chaser moves from 0.16s on wave 1 to 0.08s on wave 20 with a mid-run build.
 
