@@ -1372,11 +1372,15 @@
     const sub = $('upgrade').querySelector('p');
     const skip = $('btnSkip');
     const queued = free ? 0 : game.pendingLevels;
+    const noneAffordable = picks.every((up) => game.scrap < ND.upgradeCost(up, game.buys || 0));
     if (title) title.textContent = free ? 'spend scrap' : 'level up';
     if (sub) {
       sub.textContent = free
         ? 'buy an upgrade with banked scrap'
-        : (queued > 1 ? queued + ' upgrades earned — pick one' : 'spend scrap on an upgrade');
+        : (noneAffordable
+            // Never leave a draft looking broken: state the rule instead.
+            ? 'scrap is short — keep fighting, or bank the level'
+            : (queued > 1 ? queued + ' upgrades earned — pick one' : 'spend scrap on an upgrade'));
     }
     if (skip) {
       skip.textContent = free

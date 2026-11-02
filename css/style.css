@@ -692,14 +692,16 @@ kbd {
   text-shadow: none;
 }
 
-/* Unaffordable pick: dimmed but still hoverable so the reason is readable. */
+/* Unaffordable pick: dimmed but still hoverable so the reason is readable.
+   Kept fairly high-contrast on purpose — with a tight early economy all three
+   cards can be unaffordable at once, and a ghost-screen reads as a bug. */
 .card-poor {
-  opacity: 0.55;
-  filter: saturate(0.5);
+  opacity: 0.8;
+  filter: saturate(0.68);
 }
 
 .card-poor:hover {
-  opacity: 0.85;
+  opacity: 0.95;
   border-color: rgba(255, 59, 107, 0.55);
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7), 0 0 26px rgba(255, 59, 107, 0.22);
 }

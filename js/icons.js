@@ -9,7 +9,7 @@
 
   const PATHS = {
     // ---- core stats ----
-    dmg: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
+    dmg: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="currentColor"/>',
     rate: '<path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 3v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
     multi: '<path d="M4 12h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M9 12 20 5M9 12l11 7M9 12h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
     speed: '<path d="M3 7h9M3 12h13M3 17h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m14 8 4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
