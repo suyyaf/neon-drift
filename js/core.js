@@ -229,6 +229,9 @@ window.ND = window.ND || {};
         case 'dash':
           this.noise(0.22, 0.1, 2400, 300);
           break;
+        case 'switch':
+          this.tone(620, 900, 0.06, 'triangle', 0.05);
+          break;
         case 'boss':
           this.tone(90, 60, 0.7, 'sawtooth', 0.12);
           break;

@@ -31,6 +31,7 @@
     this.lifesteal = 0;
 
     this.cooldown = 0;
+    this.weapon = 0;
 
     this.dashCd = 0;
     this.dashMax = 1.6;
@@ -122,34 +123,102 @@
     this.cooldown -= dt;
     if (ND.mouse.down && this.cooldown <= 0) {
       this.shoot(game);
-      this.cooldown = 1 / this.fireRate;
+      this.cooldown = 1 / (this.fireRate * this.weaponDef().rate);
     }
 
     // regen
     if (this.regen > 0) this.hp = Math.min(this.maxHp, this.hp + this.regen * dt);
   };
 
+  // =========================================================
+  // WEAPONS
+  // =========================================================
+  // Each weapon reuses the player's upgrade stats but reshapes them.
+  // `rate` and `speed` are multipliers on the player's base values.
+  ND.WEAPONS = [
+    {
+      id: 'pulse',
+      name: 'PULSE',
+      hint: 'balanced',
+      rate: 1,
+      speed: 1,
+      life: 1,
+      dmg: 1,
+      count: 0,        // 0 = use the player's projectile count
+      spread: 0.13,
+      pierce: 0,       // added to the player's pierce
+      width: 1.5,
+      color: '#8ef0ff',
+      kick: 26
+    },
+    {
+      id: 'scatter',
+      name: 'SCATTER',
+      hint: 'close burst',
+      rate: 0.55,
+      speed: 0.82,
+      life: 0.42,
+      dmg: 0.52,
+      count: 7,
+      spread: 0.19,
+      pierce: 0,
+      width: 1.25,
+      color: '#ffd166',
+      kick: 90
+    },
+    {
+      id: 'rail',
+      name: 'RAIL',
+      hint: 'piercing shot',
+      rate: 0.34,
+      speed: 2.3,
+      life: 1.25,
+      dmg: 3.1,
+      count: 1,
+      spread: 0,
+      pierce: 3,
+      width: 3.2,
+      color: '#ff6bd6',
+      kick: 120
+    }
+  ];
+
+  ND.Player.prototype.weaponDef = function () {
+    return ND.WEAPONS[this.weapon] || ND.WEAPONS[0];
+  };
+
+  ND.Player.prototype.cycleWeapon = function (dir) {
+    const n = ND.WEAPONS.length;
+    this.weapon = (this.weapon + (dir || 1) + n) % n;
+    this.cooldown = Math.min(this.cooldown, 0.12);
+    ND.audio.play('switch');
+    return ND.WEAPONS[this.weapon];
+  };
+
   ND.Player.prototype.shoot = function (game) {
-    const n = this.bullets;
-    const spread = n > 1 ? this.spread : 0;
+    const w = this.weaponDef();
+    const n = w.count || this.bullets;
+    const spread = n > 1 ? w.spread : 0;
     const base = n > 1 ? this.angle - spread * (n - 1) / 2 : this.angle;
+    const speed = this.bulletSpeed * w.speed;
 
     for (let i = 0; i < n; i++) {
       const a = base + spread * i + ND.rand(-0.018, 0.018);
       const isCrit = Math.random() < this.crit;
-      const dmg = this.damage * (isCrit ? 2.4 : 1);
+      const dmg = this.damage * w.dmg * (isCrit ? 2.4 : 1);
       game.bullets.push({
         x: this.x + Math.cos(a) * (this.r + 8),
         y: this.y + Math.sin(a) * (this.r + 8),
-        vx: Math.cos(a) * this.bulletSpeed,
-        vy: Math.sin(a) * this.bulletSpeed,
-        r: isCrit ? 6 : 4,
+        vx: Math.cos(a) * speed * ND.rand(0.97, 1.03),
+        vy: Math.sin(a) * speed * ND.rand(0.97, 1.03),
+        r: (isCrit ? 6 : 4) * (w.id === 'rail' ? 1.35 : 1),
         dmg: dmg,
         crit: isCrit,
-        pierce: this.pierce,
+        pierce: this.pierce + w.pierce,
         hits: [],
-        life: this.bulletLife,
-        color: isCrit ? '#ffe066' : '#8ef0ff'
+        life: this.bulletLife * w.life,
+        color: isCrit ? '#ffe066' : w.color,
+        width: w.width
       });
     }
 
@@ -157,11 +226,11 @@
     ND.spawnParticles(
       this.x + Math.cos(this.angle) * (this.r + 10),
       this.y + Math.sin(this.angle) * (this.r + 10),
-      4,
-      { color: '#bff6ff', speed: 260, life: 0.14, size: 2.6, dir: this.angle, spread: 0.7, drag: 6 }
+      w.id === 'scatter' ? 8 : 4,
+      { color: w.color, speed: 260, life: 0.14, size: 2.6, dir: this.angle, spread: w.id === 'scatter' ? 1.1 : 0.7, drag: 6 }
     );
-    this.vx -= Math.cos(this.angle) * 26;
-    this.vy -= Math.sin(this.angle) * 26;
+    this.vx -= Math.cos(this.angle) * w.kick;
+    this.vy -= Math.sin(this.angle) * w.kick;
     ND.audio.play('shoot');
   };
 
@@ -260,7 +329,7 @@
   // =========================================================
   const ENEMY_TYPES = {
     chaser: {
-      r: 15, hp: 22, speed: 128, dmg: 9, xp: 1, color: '#ff3b6b', score: 10, sides: 3
+      r: 15, hp: 20, speed: 138, dmg: 9, xp: 1, color: '#ff3b6b', score: 10, sides: 3
     },
     drifter: {
       r: 17, hp: 34, speed: 88, dmg: 11, xp: 2, color: '#a06bff', score: 18, sides: 4

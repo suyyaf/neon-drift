@@ -92,7 +92,7 @@
     const b = ND.spawnEnemy('tank', pt.x, pt.y, game);
     b.boss = true;
     b.r = 46;
-    b.maxHp = 700 + game.wave * 260;
+    b.maxHp = 300 + game.wave * 180;
     b.hp = b.maxHp;
     b.speed = 62;
     b.dmg = 26;
@@ -205,11 +205,12 @@
 
     // waves
     game.waveTimer += dt;
-    const waveDuration = 26;
+    const waveDuration = Math.max(14, 26 - game.wave * 0.8);
     if (game.waveTimer >= waveDuration && !game.boss) {
       game.waveTimer = 0;
       game.wave++;
-      const isBossWave = game.wave % 3 === 0;
+      // First boss lands at wave 2 so the opening has a spike, then every 3rd.
+      const isBossWave = game.wave === 2 || game.wave % 3 === 0;
       if (isBossWave) {
         spawnBoss();
       } else {
@@ -453,10 +454,10 @@
     const speed = Math.hypot(b.vx, b.vy) || 1;
     const tx = -b.vx / speed;
     const ty = -b.vy / speed;
-    const len = b.hostile ? 8 : 16;
+    const len = b.hostile ? 8 : 16 + (b.r * 1.5) * (b.width || 1);
 
     ctx.strokeStyle = b.color;
-    ctx.lineWidth = b.r * 1.5;
+    ctx.lineWidth = (b.r * 1.5) * (b.width || 1);
     ctx.lineCap = 'round';
     ctx.shadowColor = b.color;
     ctx.shadowBlur = 14;
@@ -556,6 +557,18 @@
     const ready = p.dashCd <= 0;
     ctx.fillStyle = ready ? '#22d3ee' : '#37505e';
     ctx.fillText(ready ? 'DASH READY' : 'DASH ' + p.dashCd.toFixed(1) + 's', ND.view.w / 2, ND.view.h - 22);
+
+    // weapon selector
+    const w = p.weaponDef();
+    ctx.font = '700 10px ui-monospace, monospace';
+    ctx.fillStyle = w.color;
+    ctx.shadowColor = w.color;
+    ctx.shadowBlur = 12;
+    ctx.fillText('◄ ' + w.name + ' ►', ND.view.w / 2, ND.view.h - 42);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#4d6478';
+    ctx.font = '600 9px ui-monospace, monospace';
+    ctx.fillText('Q / E', ND.view.w / 2, ND.view.h - 60);
 
     // killstreak
     if (game.killstreak >= 10) {
@@ -735,6 +748,12 @@
     const n = parseInt(e.key, 10);
     if (game.state === 'upgrade' && n >= 1 && n <= 3 && game.currentPicks) {
       chooseUpgrade(game.currentPicks[n - 1]);
+    }
+    if (game.state === 'playing' && (e.key === 'q' || e.key === 'Q')) {
+      game.player.cycleWeapon(-1);
+    }
+    if (game.state === 'playing' && (e.key === 'e' || e.key === 'E')) {
+      game.player.cycleWeapon(1);
     }
     if (e.key === 'Escape') {
       if (game.state === 'playing') pauseGame();
