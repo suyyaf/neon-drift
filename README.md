@@ -30,13 +30,39 @@ On-screen buttons: **PAUSE** / **STOP** bottom-left during a run; **RESUME** / *
 ## Weapons
 
 Switch freely at any time with `Q` / `E`; the current weapon is shown above the
-dash meter. Upgrades apply to all three.
+dash meter. Upgrades apply to all three, plus weapon-specific ones.
 
 | Weapon | Feel |
 | --- | --- |
 | PULSE | Balanced, high rate of fire. The default. |
 | SCATTER | Seven-pellet burst, short range, huge close damage. |
 | RAIL | Slow, heavy, pierces 3 enemies and flies fast. |
+
+Weapon-specific upgrades appear with a gold tag on the card:
+
+| Upgrade | Effect |
+| --- | --- |
+| Pulse Flak | PULSE shots shatter into fragments on impact |
+| Buckshot | SCATTER gains +2 pellets and a tighter spread |
+| Rail Lance | RAIL gains +2 pierce and +25% damage |
+| Overcharged Lance | RAIL charges 30% faster with a wider beam |
+| Ram Plating | Dashing into enemies deals +80% burn damage |
+
+## Collision rules
+
+Enemies are always pushed out of your hull, so nothing can camp on your ship.
+
+- **Normal contact** — you take damage and the enemy is knocked back.
+- **Chasers explode on impact** instead of lingering. No score or loot for a
+  kamikaze kill; it just clears the field.
+- **While dashing or invulnerable** — you take no damage and *burn* whatever
+  touches you. Dashing deals 3.4× your damage as a ram.
+
+## High scores
+
+The best run is saved to `localStorage` under `neondrift.best.v1` and shown on
+both the title screen and the game-over screen. A new record is highlighted.
+Clearing site data resets it.
 
 ## How it plays
 

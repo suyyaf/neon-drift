@@ -33,6 +33,16 @@
     this.cooldown = 0;
     this.weapon = 0;
 
+    // weapon-specific upgrade stats
+    this.scatterBonus = 0;
+    this.scatterTighten = 1;
+    this.railPierce = 0;
+    this.railDmgMul = 1;
+    this.railRate = 1;
+    this.railWidth = 0;
+    this.flak = 0;
+    this.ramMul = 1;
+
     this.dashCd = 0;
     this.dashMax = 1.6;
     this.dashTime = 0;
@@ -123,7 +133,7 @@
     this.cooldown -= dt;
     if (ND.mouse.down && this.cooldown <= 0) {
       this.shoot(game);
-      this.cooldown = 1 / (this.fireRate * this.weaponDef().rate);
+      this.cooldown = 1 / (this.fireRate * this.weaponRate());
     }
 
     // regen
@@ -187,6 +197,12 @@
     return ND.WEAPONS[this.weapon] || ND.WEAPONS[0];
   };
 
+  // Fire-rate multiplier including per-weapon upgrades.
+  ND.Player.prototype.weaponRate = function () {
+    const w = this.weaponDef();
+    return w.id === 'rail' ? w.rate * this.railRate : w.rate;
+  };
+
   ND.Player.prototype.cycleWeapon = function (dir) {
     const n = ND.WEAPONS.length;
     this.weapon = (this.weapon + (dir || 1) + n) % n;
@@ -197,15 +213,28 @@
 
   ND.Player.prototype.shoot = function (game) {
     const w = this.weaponDef();
-    const n = w.count || this.bullets;
-    const spread = n > 1 ? w.spread : 0;
+    let n = w.count || this.bullets;
+    let spread = n > 1 ? w.spread : 0;
+    let dmgMul = w.dmg;
+    let extraPierce = w.pierce;
+    let width = w.width;
+
+    if (w.id === 'scatter') {
+      n += this.scatterBonus;
+      spread *= this.scatterTighten;
+    } else if (w.id === 'rail') {
+      extraPierce += this.railPierce;
+      dmgMul *= this.railDmgMul;
+      width += this.railWidth;
+    }
+
     const base = n > 1 ? this.angle - spread * (n - 1) / 2 : this.angle;
     const speed = this.bulletSpeed * w.speed;
 
     for (let i = 0; i < n; i++) {
       const a = base + spread * i + ND.rand(-0.018, 0.018);
       const isCrit = Math.random() < this.crit;
-      const dmg = this.damage * w.dmg * (isCrit ? 2.4 : 1);
+      const dmg = this.damage * dmgMul * (isCrit ? 2.4 : 1);
       game.bullets.push({
         x: this.x + Math.cos(a) * (this.r + 8),
         y: this.y + Math.sin(a) * (this.r + 8),
@@ -214,11 +243,12 @@
         r: (isCrit ? 6 : 4) * (w.id === 'rail' ? 1.35 : 1),
         dmg: dmg,
         crit: isCrit,
-        pierce: this.pierce + w.pierce,
+        pierce: this.pierce + extraPierce,
         hits: [],
         life: this.bulletLife * w.life,
         color: isCrit ? '#ffe066' : w.color,
-        width: w.width
+        width: width,
+        flak: w.id === 'pulse' ? this.flak : 0
       });
     }
 
@@ -373,6 +403,7 @@
       splits: def.splits || 0,
       knockX: 0,
       knockY: 0,
+      ramCd: 0,
       seed: ND.rand(0, 100)
     };
     game.enemies.push(e);
@@ -511,6 +542,47 @@
     { id: 'dash', name: 'Phase Coils', desc: 'Dash cooldown -22%', apply: (p) => { p.dashMax *= 0.78; } },
     { id: 'regen', name: 'Nanorepair', desc: 'Regenerate 1.4 HP/sec', apply: (p) => { p.regen += 1.4; } },
     { id: 'lifesteal', name: 'Vampiric Rounds', desc: 'Heal 1.5 HP on kill', apply: (p) => { p.lifesteal += 1.5; } },
-    { id: 'bspeed', name: 'Velocity Rounds', desc: 'Bullet speed +20%', apply: (p) => { p.bulletSpeed *= 1.2; p.bulletLife *= 1.08; } }
+    { id: 'bspeed', name: 'Velocity Rounds', desc: 'Bullet speed +20%', apply: (p) => { p.bulletSpeed *= 1.2; p.bulletLife *= 1.08; } },
+
+    // ---- weapon-specific ----
+    {
+      id: 'scatterPellets',
+      name: 'Buckshot',
+      desc: 'SCATTER: +2 pellets, tighter spread',
+      max: 4,
+      weapon: 'scatter',
+      apply: (p) => { p.scatterBonus += 2; p.scatterTighten *= 0.9; }
+    },
+    {
+      id: 'railLance',
+      name: 'Rail Lance',
+      desc: 'RAIL: +2 pierce and +25% damage',
+      max: 3,
+      weapon: 'rail',
+      apply: (p) => { p.railPierce += 2; p.railDmgMul *= 1.25; }
+    },
+    {
+      id: 'railCharge',
+      name: 'Overcharged Lance',
+      desc: 'RAIL: 30% faster charge, wider beam',
+      max: 3,
+      weapon: 'rail',
+      apply: (p) => { p.railRate *= 1.3; p.railWidth += 0.5; }
+    },
+    {
+      id: 'pulseFlak',
+      name: 'Pulse Flak',
+      desc: 'PULSE: shots split on impact',
+      max: 2,
+      weapon: 'pulse',
+      apply: (p) => { p.flak += 2; }
+    },
+    {
+      id: 'ram',
+      name: 'Ram Plating',
+      desc: 'Dashing into enemies burns them for +80%',
+      max: 3,
+      apply: (p) => { p.ramMul += 0.8; }
+    }
   ];
 })(window.ND);

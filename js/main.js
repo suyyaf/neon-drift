@@ -134,16 +134,23 @@
     }
   }
 
-  function killEnemy(e) {
+  function killEnemy(e, kamikaze) {
     const p = game.player;
     const idx = game.enemies.indexOf(e);
     if (idx === -1) return;
     game.enemies.splice(idx, 1);
 
-    game.score += e.score || 10;
-    p.kills++;
-    game.killstreak++;
-    game.streakTimer = 2.6;
+    // A kamikaze death still wipes the enemy off the field, but the player
+    // gets no score, streak, or loot for it.
+    if (!kamikaze) {
+      game.score += e.score || 10;
+      p.kills++;
+      game.killstreak++;
+      game.streakTimer = 2.6;
+    } else {
+      game.killstreak = 0;
+      game.streakTimer = 0;
+    }
 
     ND.spawnParticles(e.x, e.y, e.boss ? 90 : 16, {
       color: e.color,
@@ -154,8 +161,18 @@
     ND.audio.play('explode');
     ND.addShake(e.boss ? 22 : 3);
 
-    if (p.lifesteal > 0) p.hp = Math.min(p.maxHp, p.hp + p.lifesteal);
-    if (p.lifesteal > 0) floatText(e.x, e.y - e.r - 8, '+' + Math.round(p.lifesteal), '#3bff9e');
+    if (!kamikaze && p.lifesteal > 0) {
+      p.hp = Math.min(p.maxHp, p.hp + p.lifesteal);
+      floatText(e.x, e.y - e.r - 8, '+' + Math.round(p.lifesteal), '#3bff9e');
+    }
+
+    if (kamikaze) {
+      if (e.boss) {
+        game.boss = null;
+        toast('SINGULARITY COLLAPSED', '#ffb020');
+      }
+      return;
+    }
 
     // xp orbs
     const drops = e.boss ? 14 : 1;
@@ -233,14 +250,68 @@
       const e = game.enemies[i];
       ND.updateEnemy(e, dt, game);
 
-      // contact damage
+      // ---------------- contact / ram ----------------
       const rr = p.r + e.r;
-      if (ND.dist(e.x, e.y, p.x, p.y) < rr) {
-        if (p.hurt(e.dmg)) {
-          e.knockX += (e.x - p.x) * 6;
-          e.knockY += (e.y - p.y) * 6;
+      let cdx = e.x - p.x;
+      let cdy = e.y - p.y;
+      let cd = Math.hypot(cdx, cdy);
+
+      if (cd < rr) {
+        // Always separate first, so an enemy can never sit inside the ship,
+        // even while the player is invulnerable or dashing.
+        const nx = cd > 0.001 ? cdx / cd : 1;
+        const ny = cd > 0.001 ? cdy / cd : 0;
+        const overlap = rr - cd;
+
+        e.x += nx * overlap;
+        e.y += ny * overlap;
+
+        const dashing = p.dashTime > 0;
+
+        if (dashing || p.invuln > 0) {
+          // RAM: an invulnerable ship burns whatever touches it.
+          const ramMul = (dashing ? 3.4 : 0.7) * p.ramMul;
+          e.knockX += nx * (dashing ? 620 : 300);
+          e.knockY += ny * (dashing ? 620 : 300);
+
+          if (!e.ramCd || e.ramCd <= 0) {
+            e.ramCd = 0.16;
+            ND.spawnParticles(e.x, e.y, dashing ? 14 : 6, {
+              color: dashing ? '#7df9ff' : '#ffb020',
+              speed: dashing ? 420 : 240,
+              life: 0.42,
+              size: 3
+            });
+            if (dashing) ND.addShake(4);
+            damageEnemy(e, p.damage * ramMul, false);
+          }
+        } else if (p.hurt(e.dmg)) {
+          e.knockX += nx * 380;
+          e.knockY += ny * 380;
+
+          // Chasers are kamikaze drones: they blow up on impact instead of
+          // camping on top of the ship.
+          if (e.type === 'chaser' || e.kamikaze) {
+            ND.spawnParticles(e.x, e.y, 26, {
+              color: e.color,
+              speed: 520,
+              life: 0.55,
+              size: 4
+            });
+            ND.spawnParticles(e.x, e.y, 10, {
+              color: '#ffd9a0',
+              speed: 320,
+              life: 0.4,
+              size: 5
+            });
+            ND.addShake(9);
+            ND.audio.play('explode');
+            killEnemy(e, true);
+          }
         }
       }
+
+      if (e.ramCd > 0) e.ramCd -= dt;
     }
 
     // boss extra behavior: radial burst
@@ -290,6 +361,29 @@
               color: b.crit ? '#ffe066' : '#bff6ff', speed: 240, life: 0.25, size: 2.4
             });
             b.hits.push(e);
+
+            // Pulse Flak: the round shatters into fragments on impact.
+            if (b.flak > 0) {
+              for (let f = 0; f < b.flak; f++) {
+                const fa = Math.atan2(b.vy, b.vx) + Math.PI + ND.rand(-0.7, 0.7);
+                const fs = 420;
+                game.bullets.push({
+                  x: b.x, y: b.y,
+                  vx: Math.cos(fa) * fs,
+                  vy: Math.sin(fa) * fs,
+                  r: 2.5,
+                  dmg: b.dmg * 0.45,
+                  crit: false,
+                  pierce: 0,
+                  hits: [],
+                  life: 0.3,
+                  color: '#bff6ff',
+                  width: 1.1,
+                  flak: 0
+                });
+              }
+            }
+
             if (b.pierce > 0) {
               b.pierce--;
             } else {
@@ -709,15 +803,15 @@
       if (up.max && (game.upgradeCounts[up.id] || 0) >= up.max) continue;
       picks.push(up);
     }
-
     const container = $('cards');
     container.innerHTML = '';
     picks.forEach((up, i) => {
       const el = document.createElement('div');
-      el.className = 'card';
+      el.className = 'card' + (up.weapon ? ' card-weapon' : '');
       el.innerHTML =
         '<span class="key">' + (i + 1) + '</span>' +
         '<div class="glyph"></div>' +
+        (up.weapon ? '<span class="wtag">' + up.weapon.toUpperCase() + '</span>' : '') +
         '<h3>' + up.name + '</h3>' +
         '<p>' + up.desc + '</p>';
       el.addEventListener('click', () => chooseUpgrade(up));
@@ -761,6 +855,43 @@
     }
   });
 
+  // ---------------- best run persistence ----------------
+  const BEST_KEY = 'neondrift.best.v1';
+
+  function loadBest() {
+    try {
+      const raw = localStorage.getItem(BEST_KEY);
+      if (!raw) return { score: 0, wave: 0, time: 0, kills: 0 };
+      const b = JSON.parse(raw);
+      return {
+        score: Number(b.score) || 0,
+        wave: Number(b.wave) || 0,
+        time: Number(b.time) || 0,
+        kills: Number(b.kills) || 0
+      };
+    } catch (e) {
+      return { score: 0, wave: 0, time: 0, kills: 0 };
+    }
+  }
+
+  function saveBest(best) {
+    try {
+      localStorage.setItem(BEST_KEY, JSON.stringify(best));
+    } catch (e) {
+      /* storage can be blocked; a high score is not worth crashing a run */
+    }
+  }
+
+  function showMenuBest() {
+    const best = loadBest();
+    const el = $('menuBest');
+    if (!el) return;
+    el.textContent = best.score > 0
+      ? 'BEST ' + best.score + '  ·  WAVE ' + best.wave
+      : 'NO RUNS RECORDED';
+    el.classList.toggle('is-record', false);
+  }
+
   // ---------------- state transitions ----------------
   function reset() {
     game.player = new ND.Player();
@@ -795,8 +926,7 @@
   }
 
   function startGame() {
-    ND.audio.init();
-    reset();
+    ND.audio.init();    reset();
     game.state = 'playing';
     game.lastShot = 0;
     hideAllOverlays();
@@ -832,6 +962,7 @@
     hideAllOverlays();
     $('hudbar').classList.add('hidden');
     clearWorld();
+    showMenuBest();
     $('start').classList.remove('hidden');
   }
 
@@ -856,11 +987,33 @@
     });
 
     $('hudbar').classList.add('hidden');
+
+    const best = loadBest();
+    const isRecord = game.score > best.score;
+    if (isRecord) {
+      saveBest({
+        score: game.score,
+        wave: game.wave,
+        time: Math.round(game.time),
+        kills: game.player.kills
+      });
+    }
+
     $('finalStats').innerHTML =
       '<div>TIME SURVIVED &nbsp;<b>' + Math.round(game.time) + 's</b></div>' +
       '<div>WAVE REACHED &nbsp;<b>' + game.wave + '</b></div>' +
       '<div>ELIMINATIONS &nbsp;<b>' + game.player.kills + '</b></div>' +
       '<div>FINAL SCORE &nbsp;<b>' + game.score + '</b></div>';
+
+    const bestEl = $('bestLine');
+    if (isRecord && game.score > 0) {
+      bestEl.textContent = 'NEW RECORD';
+      bestEl.classList.add('is-record');
+    } else {
+      bestEl.textContent = 'BEST ' + best.score + '  ·  WAVE ' + best.wave + '  ·  ' + best.kills + ' KILLS';
+      bestEl.classList.remove('is-record');
+    }
+
     $('gameover').classList.remove('hidden');
   }
 
@@ -890,4 +1043,5 @@
   });
 
   requestAnimationFrame(frame);
+  showMenuBest();
 })(window.ND);

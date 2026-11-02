@@ -222,6 +222,34 @@ kbd {
   box-shadow: 0 0 16px rgba(34, 211, 238, 0.5), inset 0 0 12px rgba(34, 211, 238, 0.3);
 }
 
+/* Weapon-specific upgrades get a warm accent so they read differently. */
+.card-weapon {
+  border-color: rgba(255, 209, 102, 0.35);
+}
+
+.card-weapon:hover {
+  border-color: #ffd166;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 26px rgba(255, 209, 102, 0.35);
+}
+
+.card-weapon .glyph {
+  border-color: #ffd166;
+  box-shadow: 0 0 16px rgba(255, 209, 102, 0.5), inset 0 0 12px rgba(255, 209, 102, 0.3);
+}
+
+.wtag {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #1a1205;
+  background: #ffd166;
+  border-radius: 2px;
+}
+
 .stats {
   display: grid;
   gap: 8px;
@@ -232,6 +260,24 @@ kbd {
 }
 
 .stats b { color: #fff; }
+
+.best {
+  margin-top: 4px;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: #4d6478;
+}
+
+.best.is-record {
+  color: #ffe066;
+  text-shadow: 0 0 16px rgba(255, 176, 32, 0.75);
+  animation: recordPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recordPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
 
 /* ---------- In-game control bar ---------- */
 
