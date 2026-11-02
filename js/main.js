@@ -806,20 +806,31 @@
     while (picks.length < 3 && pool.length) {
       const idx = ND.randInt(0, pool.length - 1);
       const up = pool.splice(idx, 1)[0];
-      if (up.max && (game.upgradeCounts[up.id] || 0) >= up.max) continue;
+      const lvl = game.upgradeCounts[up.id] || 0;
+      if (up.max && lvl >= up.max) continue;
       picks.push(up);
     }
+
     const container = $('cards');
     container.innerHTML = '';
     picks.forEach((up, i) => {
+      const lvl = game.upgradeCounts[up.id] || 0;
+      const nextLvl = lvl + 1;
+      const maxed = up.max && nextLvl >= up.max;
+
       const el = document.createElement('div');
-      el.className = 'card' + (up.weapon ? ' card-weapon' : '');
+      el.className = 'card' + (up.weapon ? ' card-weapon' : '') + (maxed ? ' card-maxed' : '');
       el.innerHTML =
         '<span class="key">' + (i + 1) + '</span>' +
-        '<div class="glyph"></div>' +
+        '<div class="glyph">' + ND.iconSvg(up.icon, 26) + '</div>' +
         (up.weapon ? '<span class="wtag">' + up.weapon.toUpperCase() + '</span>' : '') +
         '<h3>' + up.name + '</h3>' +
-        '<p>' + up.desc + '</p>';
+        '<p>' + up.desc + '</p>' +
+        '<div class="lvrow">' +
+          '<span class="lvlabel">' + (lvl === 0 ? 'NEW' : 'LV ' + lvl + ' → ' + nextLvl) + '</span>' +
+          renderPips(lvl, up.max) +
+          (maxed ? '<span class="maxtag">MAX</span>' : '') +
+        '</div>';
       el.addEventListener('click', () => chooseUpgrade(up));
       container.appendChild(el);
     });
@@ -828,10 +839,83 @@
     $('upgrade').classList.remove('hidden');
   }
 
+  // Little level dots under each card. Omitted for uncapped upgrades.
+  function renderPips(level, max) {
+    if (!max) return '';
+    let out = '<span class="pips">';
+    for (let i = 0; i < max; i++) {
+      out += '<i class="' + (i < level ? 'on' : (i === level ? 'next' : '')) + '"></i>';
+    }
+    out += '</span>';
+    return out;
+  }
+
+  // ---------------- build tracker ----------------
+  // The panel lists everything acquired this run, strongest first, with a
+  // level/max readout. Ordered by raw level so a committed build reads at a
+  // glance; maxed entries are tinted green.
+  function renderBuild() {
+    const host = $('buildList');
+    if (!host) return;
+
+    const rows = [];
+    for (const id in game.upgradeCounts) {
+      const lvl = game.upgradeCounts[id];
+      const up = ND.UPGRADE_BY_ID[id];
+      if (!up || !lvl) continue;
+      rows.push({ up: up, lvl: lvl, maxed: up.max && lvl >= up.max });
+    }
+
+    if (!rows.length) {
+      host.innerHTML = '<div class="bempty">NO MODULES<br>INSTALLED</div>';
+      return;
+    }
+
+    // Rank by how complete each module is (a 3/3 counts as more finished than
+    // a 2/8), so the panel reads as a build summary at a glance.
+    const frac = (r) => (r.up.max ? Math.min(r.lvl, r.up.max) / r.up.max : 0);
+    rows.sort((a, b) => {
+      const d = frac(b) - frac(a);
+      if (Math.abs(d) > 0.001) return d;
+      if (a.maxed !== b.maxed) return a.maxed ? -1 : 1;
+      return a.up.name.localeCompare(b.up.name);
+    });
+
+    // Keep the panel from growing into the HUD: show the strongest entries and
+    // summarise the rest in one compact line.
+    const LIMIT = 9;
+    const shown = rows.length > LIMIT ? rows.slice(0, LIMIT - 1) : rows;
+    const rest = rows.length - shown.length;
+
+    let html = shown.map((r) => {
+      const cls = 'brow' + (r.up.weapon ? ' weapon' : '') + (r.maxed ? ' maxed' : '');
+      const label = r.up.max ? Math.min(r.lvl, r.up.max) + '/' + r.up.max : String(r.lvl);
+      return '<div class="' + cls + '" title="' + r.up.name + '">' +
+        '<span class="bico">' + ND.iconSvg(r.up.icon, 12) + '</span>' +
+        '<span class="bname">' + r.up.name + '</span>' +
+        '<span class="blvl">' + label + '</span>' +
+      '</div>';
+    }).join('');
+
+    if (rest > 0) {
+      html += '<div class="bmore">+' + rest + ' MORE</div>';
+    }
+
+    host.innerHTML = html;
+  }
+
+  function setBuildVisible(on) {
+    const el = $('build');
+    if (!el) return;
+    if (on) el.classList.remove('hidden');
+    else el.classList.add('hidden');
+  }
+
   function chooseUpgrade(up) {
     if (game.state !== 'upgrade') return;
     up.apply(game.player);
     game.upgradeCounts[up.id] = (game.upgradeCounts[up.id] || 0) + 1;
+    renderBuild();
     game.pendingLevels--;
     $('upgrade').classList.add('hidden');
 
@@ -1005,6 +1089,7 @@
     game.streakTimer = 0;
     game.currentPicks = null;
     game.upgradeCounts = {};
+    renderBuild();
     ND.shake = 0;
     game.camX = game.player.x - ND.view.w / 2;
     game.camY = game.player.y - ND.view.h / 2;
@@ -1025,6 +1110,7 @@
     game.state = 'playing';
     hideAllOverlays();
     $('hudbar').classList.remove('hidden');
+    setBuildVisible(true);
     ND.music.intensity = 1;
     ND.music.play('track');
     toast('WAVE 1 // ENGAGE', '#22d3ee');
@@ -1059,6 +1145,7 @@
     ND.keys.clear();
     hideAllOverlays();
     $('hudbar').classList.add('hidden');
+    setBuildVisible(false);
     clearWorld();
     showMenuBest();
     ND.music.intensity = 1;
@@ -1088,6 +1175,7 @@
     });
 
     $('hudbar').classList.add('hidden');
+    setBuildVisible(false);
 
     $('finalStats').innerHTML =
       '<div>TIME SURVIVED &nbsp;<b>' + Math.round(game.time) + 's</b></div>' +

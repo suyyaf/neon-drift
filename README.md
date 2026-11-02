@@ -116,18 +116,40 @@ Waves escalate on a timer. The first boss arrives on **wave 2**, then every 3rd
 wave after that; bosses fire radial bursts.
 Dying ends the run and shows your time, wave, kills, and score.
 
+## Upgrades and build tracker
+
+Every level-up offers 3 random upgrades with an icon, a level readout, and a
+row of pips showing progress toward the cap. Cards badge `NEW` on first
+acquisition and `MAX` (green border) when the pick completes the upgrade.
+
+Each upgrade has a `max` level (weapon-specific ones cap lower, at 2–4), so a
+build converges rather than scaling forever. Completed upgrades stop appearing
+in the offer pool.
+
+A **BUILD** panel sits in the bottom-right during play and lists everything you
+have acquired, ranked by how complete each module is. Icons are tinted cyan,
+weapon upgrades amber, and maxed modules green with a `n/n` readout. Past 9
+entries the panel collapses the rest into a `+n MORE` line so it never grows
+into the HUD.
+
+All icons are inline SVG path data in `js/icons.js` (`ND.iconSvg(id, size)`),
+drawn on a 24×24 viewBox with `currentColor` so they inherit the accent colour,
+and scale crisply at any size.
+
 ## Structure
 
 ```
 index.html        screens: title, level up, pause, game over
-css/style.css     layout, CRT scanlines, neon buttons, upgrade cards
+css/style.css     layout, CRT scanlines, neon buttons, upgrade cards, build panel
 js/core.js        canvas + view, math helpers, input, particles, WebAudio synth
+js/icons.js       inline SVG icon set for every upgrade
+js/music.js       procedural synthwave soundtrack
 js/entities.js    player, enemy types, pickups, upgrade definitions
 js/main.js        game loop, wave director, camera, HUD, state machine
 ```
 
 Everything is global-namespaced under `window.ND` and loaded with plain
-`<script>` tags in order: `core` → `entities` → `main`.
+`<script>` tags in order: `core` → `icons` → `music` → `entities` → `main`.
 
 ## Tuning notes
 

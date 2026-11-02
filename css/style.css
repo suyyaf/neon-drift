@@ -4,6 +4,7 @@
   --cyan: #22d3ee;
   --pink: #ff3b6b;
   --violet: #a06bff;
+  --green: #3bff9e;
   --ink: #05060a;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
 }
@@ -214,12 +215,27 @@ kbd {
 }
 
 .card .glyph {
-  width: 34px;
-  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   margin-bottom: 14px;
-  border: 2px solid var(--cyan);
+  color: var(--cyan);
+  border: 2px solid rgba(34, 211, 238, 0.45);
   border-radius: 50%;
-  box-shadow: 0 0 16px rgba(34, 211, 238, 0.5), inset 0 0 12px rgba(34, 211, 238, 0.3);
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.16), transparent 70%);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.4), inset 0 0 12px rgba(34, 211, 238, 0.22);
+}
+
+.card .glyph .icon {
+  display: block;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.card:hover .glyph {
+  border-color: var(--cyan);
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.7), inset 0 0 14px rgba(34, 211, 238, 0.35);
 }
 
 /* Weapon-specific upgrades get a warm accent so they read differently. */
@@ -233,8 +249,179 @@ kbd {
 }
 
 .card-weapon .glyph {
-  border-color: #ffd166;
-  box-shadow: 0 0 16px rgba(255, 209, 102, 0.5), inset 0 0 12px rgba(255, 209, 102, 0.3);
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.45);
+  background: radial-gradient(circle, rgba(255, 209, 102, 0.16), transparent 70%);
+  box-shadow: 0 0 16px rgba(255, 209, 102, 0.4), inset 0 0 12px rgba(255, 209, 102, 0.22);
+}
+
+/* ---------- Level pips / maxed state ---------- */
+
+.lvrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  min-height: 14px;
+}
+
+.lvlabel {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #6f8ba0;
+  white-space: nowrap;
+}
+
+.pips {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.pips i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: rgba(120, 150, 170, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(120, 150, 170, 0.18);
+}
+
+.pips i.on {
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.9);
+}
+
+.pips i.next {
+  background: rgba(34, 211, 238, 0.35);
+  animation: pipPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pipPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.card-weapon .pips i.on {
+  background: #ffd166;
+  box-shadow: 0 0 6px rgba(255, 209, 102, 0.9);
+}
+
+.card-weapon .pips i.next {
+  background: rgba(255, 209, 102, 0.4);
+}
+
+.maxtag {
+  padding: 1px 5px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #0a1a10;
+  background: var(--green, #3bff9e);
+  border-radius: 2px;
+}
+
+.card-maxed {
+  border-color: rgba(59, 255, 158, 0.4);
+}
+
+.card-maxed:hover {
+  border-color: #3bff9e;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 26px rgba(59, 255, 158, 0.3);
+}
+
+/* ---------- Build tracker ---------- */
+
+.build {
+  position: fixed;
+  right: 18px;
+  bottom: 16px;
+  z-index: 12;
+  width: 176px;
+  padding: 8px 10px 10px;
+  pointer-events: none;
+  background: linear-gradient(165deg, rgba(10, 18, 30, 0.82), rgba(6, 10, 18, 0.86));
+  border: 1px solid rgba(34, 211, 238, 0.16);
+  border-radius: 5px;
+  backdrop-filter: blur(4px);
+  transition: opacity 0.25s ease;
+}
+
+.build.hidden {
+  display: none;
+}
+
+.build-head {
+  margin-bottom: 7px;
+  padding-bottom: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  color: #4d6478;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.12);
+}
+
+.build-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 46vh;
+  overflow: hidden;
+}
+
+.brow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: #8aa6ba;
+}
+
+.brow .bico {
+  flex: none;
+  display: flex;
+  color: rgba(34, 211, 238, 0.85);
+}
+
+.brow.weapon .bico {
+  color: #ffd166;
+}
+
+.brow.maxed .bico {
+  color: #3bff9e;
+}
+
+.brow .bname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brow .blvl {
+  flex: none;
+  font-weight: 700;
+  color: #c3dcea;
+}
+
+.brow.maxed .blvl {
+  color: #3bff9e;
+}
+
+.bempty {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: #3c4e5e;
+  line-height: 1.6;
+}
+
+.bmore {
+  padding-top: 2px;
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: #3c4e5e;
 }
 
 .wtag {

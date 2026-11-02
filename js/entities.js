@@ -601,19 +601,21 @@
   // =========================================================
   // UPGRADES
   // =========================================================
+  // `max` is the level cap; omitted means unlimited. `tier` drives the colour
+  // accent so a maxed build reads at a glance.
   ND.UPGRADES = [
-    { id: 'dmg', name: 'Overcharge', desc: 'Bullet damage +22%', glyph: 'dmg', apply: (p) => { p.damage *= 1.22; } },
-    { id: 'rate', name: 'Hyper Cycle', desc: 'Fire rate +18%', apply: (p) => { p.fireRate *= 1.18; } },
+    { id: 'dmg', name: 'Overcharge', desc: 'Bullet damage +22%', max: 8, apply: (p) => { p.damage *= 1.22; } },
+    { id: 'rate', name: 'Hyper Cycle', desc: 'Fire rate +18%', max: 8, apply: (p) => { p.fireRate *= 1.18; } },
     { id: 'multi', name: 'Split Barrel', desc: '+1 projectile per shot', max: 5, apply: (p) => { p.bullets += 1; } },
-    { id: 'speed', name: 'Afterburner', desc: 'Move speed +12%', apply: (p) => { p.speed *= 1.12; } },
-    { id: 'hp', name: 'Hull Plating', desc: 'Max HP +25 and heal 25', apply: (p) => { p.maxHp += 25; p.hp = Math.min(p.maxHp, p.hp + 25); } },
+    { id: 'speed', name: 'Afterburner', desc: 'Move speed +12%', max: 6, apply: (p) => { p.speed *= 1.12; } },
+    { id: 'hp', name: 'Hull Plating', desc: 'Max HP +25 and heal 25', max: 6, apply: (p) => { p.maxHp += 25; p.hp = Math.min(p.maxHp, p.hp + 25); } },
     { id: 'pierce', name: 'Railround', desc: 'Bullets pierce +1 enemy', max: 3, apply: (p) => { p.pierce += 1; } },
-    { id: 'crit', name: 'Weakpoint AI', desc: 'Crit chance +10%', apply: (p) => { p.crit += 0.1; } },
-    { id: 'magnet', name: 'Tractor Field', desc: 'Pickup range +80', apply: (p) => { p.magnet += 80; } },
-    { id: 'dash', name: 'Phase Coils', desc: 'Dash cooldown -22%', apply: (p) => { p.dashMax *= 0.78; } },
-    { id: 'regen', name: 'Nanorepair', desc: 'Regenerate 1.4 HP/sec', apply: (p) => { p.regen += 1.4; } },
-    { id: 'lifesteal', name: 'Vampiric Rounds', desc: 'Heal 1.5 HP on kill', apply: (p) => { p.lifesteal += 1.5; } },
-    { id: 'bspeed', name: 'Velocity Rounds', desc: 'Bullet speed +20%', apply: (p) => { p.bulletSpeed *= 1.2; p.bulletLife *= 1.08; } },
+    { id: 'crit', name: 'Weakpoint AI', desc: 'Crit chance +10%', max: 6, apply: (p) => { p.crit += 0.1; } },
+    { id: 'magnet', name: 'Tractor Field', desc: 'Pickup range +80', max: 4, apply: (p) => { p.magnet += 80; } },
+    { id: 'dash', name: 'Phase Coils', desc: 'Dash cooldown -22%', max: 4, apply: (p) => { p.dashMax *= 0.78; } },
+    { id: 'regen', name: 'Nanorepair', desc: 'Regenerate 1.4 HP/sec', max: 4, apply: (p) => { p.regen += 1.4; } },
+    { id: 'lifesteal', name: 'Vampiric Rounds', desc: 'Heal 1.5 HP on kill', max: 4, apply: (p) => { p.lifesteal += 1.5; } },
+    { id: 'bspeed', name: 'Velocity Rounds', desc: 'Bullet speed +20%', max: 4, apply: (p) => { p.bulletSpeed *= 1.2; p.bulletLife *= 1.08; } },
 
     // ---- weapon-specific ----
     {
@@ -656,4 +658,11 @@
       apply: (p) => { p.ramMul += 0.8; }
     }
   ];
+
+  // Fast lookup by id, plus an icon id for every upgrade.
+  ND.UPGRADE_BY_ID = {};
+  ND.UPGRADES.forEach((u) => {
+    u.icon = u.id;
+    ND.UPGRADE_BY_ID[u.id] = u;
+  });
 })(window.ND);
