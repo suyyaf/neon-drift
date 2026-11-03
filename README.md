@@ -41,7 +41,7 @@ python -m http.server 8123
 | --- | --- |
 | `W` `A` `S` `D` | Move |
 | Mouse | Aim |
-| Hold Left Mouse | Fire |
+| — | Guns fire automatically; you only aim |
 | `Space` / `Shift` | Dash (brief invulnerability) |
 | `Q` / `E` | Cycle weapon |
 | `R` | Fire a chargeable special |

@@ -160,8 +160,11 @@
     );
 
     // shooting
+    // Auto-fire: the gun is always hot, so aiming is the only trigger skill.
+    // Holding LMB is no longer required (and does nothing extra); the mouse
+    // still sets `this.angle` above, so lining up shots is unchanged.
     this.cooldown -= dt;
-    if (ND.mouse.down && this.cooldown <= 0) {
+    if (this.cooldown <= 0) {
       this.shoot(game);
       this.cooldown = 1 / (this.fireRate * this.weaponRate());
     }
