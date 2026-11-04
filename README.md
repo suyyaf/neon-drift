@@ -71,16 +71,30 @@ That whole transition is skipped when the OS reports
 The game **auto-pauses** when the window loses focus or the tab is hidden, so a
 run never continues unseen.
 
-| `1` `2` `3` | Buy an upgrade in a draft |
-| `B` | Bank the level for scrap instead (or close the scrap screen) |
+### Touch
+
+The game detects a coarse pointer and switches to a twin-stick layout:
+
+- **Left thumb** — drag anywhere in the left half to move. The stick floats to
+  where your thumb lands.
+- **Right thumb** — drag to aim. With the thumb idle the ship **auto-targets the
+  nearest hostile**, so one-thumb play works and aiming is an upgrade.
+- **DASH** and **SWAP** sit in the bottom-right corner, within thumb reach.
+- **PAUSE** and **UPGRADE** sit at the bottom centre; sound and stop live in the
+  pause panel, so the top of the screen stays clear for the HUD.
+
+The page locks `touch-action` on the canvas, hides the URL-bar-safe areas behind
+`env(safe-area-inset-*)`, and drops `backdrop-filter` on touch: blurring a live
+canvas every frame is one of the most expensive things a phone GPU can do.
 
 On-screen buttons, bottom-left during a run: **PAUSE** (Esc), **UPGRADE** (opens
 the scrap shop, same as `T`), **SOUND ON/OFF** (turns red when muted), **STOP**
-(abandons the run). The pause screen has **RESUME** / **END RUN**; death offers
-**RUN IT BACK** / **MAIN MENU**.
+(abandons the run). The pause screen has **RESUME** / **SOUND** / **END RUN**;
+death offers **RUN IT BACK** / **MAIN MENU**.
 
-The **BUILD** tracker bottom-right can be folded away by clicking its header
-(`HIDE` / `SHOW`). Both the control bar and the tracker are hidden while paused.
+The **BUILD** tracker can be folded away by clicking its header (`HIDE` /
+`SHOW`). On touch it starts folded and sits above the movement thumb. Both the
+control bar and the tracker are hidden while paused.
 
 ## Weapons
 
@@ -139,14 +153,35 @@ muting affects both while they stay independently balanced.
 
 ## Performance notes
 
-- Particles are capped at **900**. Beyond that the frame cost spikes sharply and
-  the screen is unreadable anyway, so the cap behaves as a graceful ceiling
-  rather than a visual downgrade (normal play sits around 20 live particles).
-- Particle drawing batches by colour so `shadowBlur` (the expensive part) is set
-  once per colour run instead of per particle.
+The renderer is built around two rules: **never blur per object**, and **never
+redraw anything static**.
+
+- **No `shadowBlur` in the hot path.** It was the single biggest cost: every
+  enemy, bullet and particle paid for its own Skia blur pass. Glow is now an
+  additive pre-rendered radial sprite (`ND.drawGlow`) or a wide translucent
+  stroke, both of which are one draw call.
+- **Bullets are batched by colour.** A 150-round screen is two or three strokes
+  plus one fill instead of 150 state changes and blur passes.
+- **The backdrop is pre-rendered.** A seamless nebula tile, a star tile, a 96px
+  grid tile and the vignette are built once on resize and scrolled as patterns.
+  Parallax is per-layer, and the nebula drifts on its own clock.
+- **Adaptive resolution.** Quality tiers cap the device pixel ratio at 2x
+  desktop / 1.5x touch / 1x low, and a rolling frame-time average drops a tier
+  if the device cannot hold ~45 FPS. Phones default to the medium tier.
+- Particles are capped at **900**; normal play sits around 20-120.
 - Enemy separation uses a 64px uniform grid, so cost stays near-linear.
-- Measured on the dev machine: ~140 FPS idle, ~120 FPS mid-fight, and ~45 FPS
-  under an artificial stress load of 60 enemies plus a full particle budget.
+
+Stress scene (64 enemies, 150 bullets, 400 particles), measured as sustained
+frame time at three resolutions, before → after:
+
+| Surface | Before | After |
+| --- | --- | --- |
+| 912×670 @ 1.25x | 36 FPS | 72 FPS |
+| 1920×1080 @ 1x | 29 FPS | 48 FPS |
+| 390×844 @ 2x (phone) | 49 FPS | 72 FPS |
+
+Real gameplay on the dev machine runs at the display refresh rate (~140 FPS),
+including the title-screen attract fight.
 
 ## High scores
 
@@ -264,13 +299,34 @@ Specials are shown bottom-left with a live cooldown; actives flash bright when
 ready. `R` fires the first active special that is off cooldown. Passives are
 marked `ON`.
 
+## Visual design
+
+Everything is drawn procedurally; there are no image assets.
+
+- **Player ship.** A layered hull: a teal gradient silhouette, an inner plate, a
+  bright spine, swept wings with cyan stripes, a teardrop canopy, two navigation
+  lights and a flickering twin-engine flame. It banks by squashing across its
+  facing axis in proportion to sideways drift, so turns read as turns.
+- **Enemy silhouettes.** Each type is legible at a glance: darts chase,
+  diamonds drift (with counter-rotating orbit arcs), pentagons shoot (barrel and
+  muzzle), hexagons tank (armour plate and rivets), stars split (eight-point
+  spikes and a gear ring). Bosses add two counter-rotating rings.
+- **Backdrop.** A pre-rendered seamless nebula (cyan / violet / pink), a
+  320-star parallax field with occasional cross-sparkles, a 96px grid that
+  aligns to world space, a vignette, and a soft additive pool of light under the
+  ship. The nebula drifts independently of the camera.
+- **HUD.** Canvas-drawn and collision-checked: toasts stack, the boss bar clears
+  the top-left readout, and the scrap value is measured from the level text
+  instead of a fixed offset.
+
 ## Ship scale
 
 All ship hitboxes and visuals are sized through `SHIP` in `js/entities.js`
 (currently `0.65`). Changing that one constant scales the player, every enemy,
 the boss, and — because it feeds the collision radius — the hitboxes in lockstep
 with the art. Muzzle offsets, thruster length, cockpit size and the drone orbit
-derive from it too.
+derive from it too. The player hull is drawn at ~1.5× the collision radius (the
+usual shmup forgiveness trick); `u = this.r * 1.05` is the local design unit.
 
 ## Structure
 

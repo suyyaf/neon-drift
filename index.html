@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#05060a" />
   <meta name="referrer" content="no-referrer" />
   <!-- Defense in depth: scripts may only load from this origin, so even an
        injected inline handler cannot execute. Inline STYLES stay allowed
@@ -10,7 +11,7 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>NEON DRIFT</title>
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=20261105c" />
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -32,6 +33,12 @@
     <button id="btnStop" class="chip danger" type="button" title="Abandon this run" aria-label="Stop the run and return to the menu">STOP</button>
   </div>
 
+  <!-- TOUCH ACTIONS (shown only on coarse pointers) -->
+  <div id="touchbar" class="touchbar hidden">
+    <button id="btnDash" class="tbtn" type="button" aria-label="Dash">DASH</button>
+    <button id="btnSwap" class="tbtn" type="button" aria-label="Swap weapon">SWAP</button>
+  </div>
+
   <!-- START -->
   <div id="start" class="overlay">
     <h1>NEON DRIFT</h1>
@@ -49,10 +56,15 @@
       <p class="meta-foot">cores are earned every run · spend them before you launch</p>
     </div>
 
-    <div class="controls">
+    <div class="controls desk-only">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; <kbd>MOUSE</kbd> aim</div>
       <div>guns fire automatically &nbsp;·&nbsp; <kbd>SPACE</kbd> dash &nbsp;·&nbsp; <kbd>Q</kbd><kbd>E</kbd> swap weapon</div>
       <div><kbd>T</kbd> spend scrap &nbsp;·&nbsp; <kbd>ESC</kbd> pause &nbsp;·&nbsp; <kbd>M</kbd> mute</div>
+    </div>
+    <div class="controls touch-only">
+      <div><kbd>LEFT</kbd> drag to move &nbsp;·&nbsp; <kbd>RIGHT</kbd> drag to aim</div>
+      <div>guns fire automatically &nbsp;·&nbsp; aim assist when the right thumb rests</div>
+      <div><kbd>DASH</kbd> and <kbd>SWAP</kbd> sit above the aim stick</div>
     </div>
     <button id="play">enter the grid</button>
   </div>
@@ -69,9 +81,11 @@
   <!-- PAUSE -->
   <div id="pause" class="overlay hidden">
     <h2>paused</h2>
-    <p>press esc to resume</p>
+    <p class="desk-only">press esc to resume</p>
+    <p class="touch-only">tap resume to continue</p>
     <div class="row">
       <button id="btnResume" type="button">resume</button>
+      <button id="btnMutePause" class="ghost" type="button">sound: on</button>
       <button id="btnEnd" class="ghost" type="button">end run</button>
     </div>
   </div>
@@ -102,10 +116,10 @@
     </div>
   </div>
 
-  <script src="js/core.js"></script>
-  <script src="js/icons.js"></script>
-  <script src="js/music.js"></script>
-  <script src="js/entities.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/core.js?v=20261105c"></script>
+  <script src="js/icons.js?v=20261105c"></script>
+  <script src="js/music.js?v=20261105c"></script>
+  <script src="js/entities.js?v=20261105c"></script>
+  <script src="js/main.js?v=20261105c"></script>
 </body>
 </html>

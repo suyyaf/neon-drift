@@ -89,12 +89,23 @@
   ND.Player.prototype.update = function (dt, game) {
     const k = ND.keys;
     let ix = 0, iy = 0;
-    if (k.has('w') || k.has('arrowup')) iy -= 1;
-    if (k.has('s') || k.has('arrowdown')) iy += 1;
-    if (k.has('a') || k.has('arrowleft')) ix -= 1;
-    if (k.has('d') || k.has('arrowright')) ix += 1;
-    const len = Math.hypot(ix, iy) || 1;
-    ix /= len; iy /= len;
+    if (ND.isTouch) {
+      // Virtual stick already returns a clamped unit vector.
+      ix = ND.touchMove.x;
+      iy = ND.touchMove.y;
+    } else {
+      if (k.has('w') || k.has('arrowup')) iy -= 1;
+      if (k.has('s') || k.has('arrowdown')) iy += 1;
+      if (k.has('a') || k.has('arrowleft')) ix -= 1;
+      if (k.has('d') || k.has('arrowright')) ix += 1;
+      const len = Math.hypot(ix, iy) || 1;
+      ix /= len; iy /= len;
+    }
+
+    if (ND.actions.swap) {
+      this.cycleWeapon(ND.actions.swap);
+      ND.actions.swap = 0;
+    }
 
     this.dashCd = Math.max(0, this.dashCd - dt);
     this.dashTime = Math.max(0, this.dashTime - dt);
@@ -102,13 +113,26 @@
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 4);
 
     // dash
-    if ((k.has(' ') || k.has('shift')) && this.dashCd <= 0 && (ix || iy || this.moving)) {
+    const dashBtn = ND.actions.dash;
+    const wantDash = k.has(' ') || k.has('shift') || dashBtn;
+    ND.actions.dash = false;
+    if (wantDash && this.dashCd <= 0 && (ix || iy || this.moving || dashBtn)) {
       this.dashTime = 0.16;
       this.dashCd = this.dashMax;
       this.invuln = Math.max(this.invuln, 0.22);
-      // Fall back to the last facing so a dash is always a finite direction.
-      this.dashDx = (ix || this.lastDx || 1) || 1;
-      this.dashDy = (iy || this.lastDy || 0) || 0;
+      if (ix || iy) {
+        this.dashDx = ix;
+        this.dashDy = iy;
+      } else if (dashBtn) {
+        // Touch dash button: launch along the aim direction, so a stationary
+        // ship still dashes where the player is pointing.
+        this.dashDx = Math.cos(this.angle);
+        this.dashDy = Math.sin(this.angle);
+      } else {
+        // Fall back to the last facing so a dash is always a finite direction.
+        this.dashDx = this.lastDx || 1;
+        this.dashDy = this.lastDy || 0;
+      }
       const dl = Math.hypot(this.dashDx, this.dashDy) || 1;
       this.dashDx /= dl;
       this.dashDy /= dl;
@@ -150,14 +174,23 @@
     this.x = ND.wrapX(this.x);
     this.y = ND.wrapY(this.y);
 
-    // Aim at the mouse in world space. The mouse may sit past a seam (the
-    // camera wraps), so take the short way round instead of a full-map angle.
-    const mx = ND.wrapX(ND.mouse.x + game.camX);
-    const my = ND.wrapY(ND.mouse.y + game.camY);
-    this.angle = Math.atan2(
-      ND.delta(this.y, my, ND.WORLD.h),
-      ND.delta(this.x, mx, ND.WORLD.w)
-    );
+    // Aim. Desktop uses the mouse; touch uses the right stick, and falls back
+    // to auto-targeting the nearest hostile when that thumb is idle, so the
+    // game is playable with one thumb and precise with two.
+    if (ND.isTouch) {
+      this.angle = ND.aim.active
+        ? Math.atan2(ND.aim.y, ND.aim.x)
+        : this.autoAim(game);
+    } else {
+      // The mouse may sit past a seam (the camera wraps), so take the short way
+      // round instead of a full-map angle.
+      const mx = ND.wrapX(ND.mouse.x + game.camX);
+      const my = ND.wrapY(ND.mouse.y + game.camY);
+      this.angle = Math.atan2(
+        ND.delta(this.y, my, ND.WORLD.h),
+        ND.delta(this.x, mx, ND.WORLD.w)
+      );
+    }
 
     // shooting
     // Auto-fire: the gun is always hot, so aiming is the only trigger skill.
@@ -171,6 +204,23 @@
 
     // regen
     if (this.regen > 0) this.hp = Math.min(this.maxHp, this.hp + this.regen * dt);
+  };
+
+  // Touch fallback: face the closest threat. Range is generous but finite, so
+  // the ship keeps its last heading instead of snapping to something offscreen.
+  ND.Player.prototype.autoAim = function (game) {
+    let best = null;
+    let bestD = 780;
+    for (let i = 0; i < game.enemies.length; i++) {
+      const e = game.enemies[i];
+      const d = ND.distT(this.x, this.y, e.x, e.y);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return this.angle;
+    return Math.atan2(
+      ND.delta(this.y, best.y, ND.WORLD.h),
+      ND.delta(this.x, best.x, ND.WORLD.w)
+    );
   };
 
   // =========================================================
@@ -354,71 +404,170 @@
     }
   };
 
+  // Ship art. Drawn in local space with +x forward, so the whole silhouette
+  // turns with the aim. `u` is the visual unit: the hull reads roughly 1.5x
+  // the collision radius, the usual shmup trick that makes near-misses feel
+  // fair. Glow is an additive sprite, not shadowBlur (see core.js).
   ND.Player.prototype.draw = function (ctx) {
     const t = performance.now() / 1000;
+    const u = this.r * 1.05;
+    const flash = this.hurtFlash > 0.5;
+    const sp = Math.hypot(this.vx, this.vy);
+    const thrust = Math.min(1, sp / (this.speed || 320));
 
-    // dash cooldown ring
-    const ringGap = 12 * this.scale;
+    // dash cooldown ring: wide dim pass + thin bright pass reads as a glow
+    // without paying for a blur every frame.
+    const ringGap = 15 * this.scale;
+    const rr = this.r + ringGap;
     if (this.dashCd > 0) {
       ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r + ringGap, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - this.dashCd / this.dashMax));
-      ctx.strokeStyle = 'rgba(34,211,238,0.35)';
+      ctx.arc(this.x, this.y, rr, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - this.dashCd / this.dashMax));
+      ctx.strokeStyle = 'rgba(34,211,238,0.32)';
       ctx.lineWidth = 2;
       ctx.stroke();
     } else {
       ctx.beginPath();
-      ctx.arc(this.x, this.y, this.r + ringGap, 0, TAU);
-      ctx.strokeStyle = 'rgba(34,211,238,0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.shadowColor = '#22d3ee';
-      ctx.shadowBlur = 12;
+      ctx.arc(this.x, this.y, rr, 0, TAU);
+      ctx.strokeStyle = 'rgba(34,211,238,0.14)';
+      ctx.lineWidth = 3.2;
       ctx.stroke();
-      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, rr, 0, TAU);
+      ctx.strokeStyle = 'rgba(150,250,255,0.62)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
     }
 
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // thruster glow behind
-    const sp = Math.hypot(this.vx, this.vy);
-    if (sp > 40) {
-      const s = this.scale;
+    // Bank: squash across the facing axis in proportion to sideways drift.
+    // Cheap, and it makes the ship feel like it is turning rather than sliding.
+    const lateral = this.vx * -Math.sin(this.angle) + this.vy * Math.cos(this.angle);
+    const bank = 1 - Math.min(0.16, Math.abs(lateral) / 2200);
+    ctx.scale(1, bank);
+
+    const side = [
+      [2.30, 0.00],
+      [0.88, 0.24],
+      [0.30, 0.56],
+      [-0.42, 1.42],
+      [-0.98, 1.26],
+      [-0.70, 0.52],
+      [-1.02, 0.30],
+      [-1.22, 0.12],
+      [-1.22, 0.00]
+    ];
+
+    function hullPath() {
       ctx.beginPath();
-      ctx.moveTo(-this.r - 2 * s, -5 * s);
-      ctx.lineTo(-this.r - (10 + Math.min(16, sp * 0.03)) * s, 0);
-      ctx.lineTo(-this.r - 2 * s, 5 * s);
+      ctx.moveTo(side[0][0] * u, 0);
+      for (let i = 1; i < side.length; i++) ctx.lineTo(side[i][0] * u, side[i][1] * u);
+      for (let i = side.length - 2; i >= 0; i--) ctx.lineTo(side[i][0] * u, -side[i][1] * u);
       ctx.closePath();
-      ctx.fillStyle = 'rgba(34,211,238,' + Math.min(0.6, sp / 520) + ')';
-      ctx.fill();
     }
 
-    // ship body
-    const flash = this.hurtFlash > 0.5;
-    ctx.beginPath();
-    ctx.moveTo(this.r + 6 * this.scale, 0);
-    ctx.lineTo(-this.r * 0.7, this.r * 0.85);
-    ctx.lineTo(-this.r * 0.25, 0);
-    ctx.lineTo(-this.r * 0.7, -this.r * 0.85);
-    ctx.closePath();
+    // ---- engine ----
+    if (sp > 24) {
+      const flick = 0.82 + Math.random() * 0.36;
+      const len = (9 + Math.min(22, sp * 0.035)) * flick;
+      for (let s = -1; s <= 1; s += 2) {
+        const ey = s * u * 0.42;
+        const g = ctx.createLinearGradient(-u * 0.9, 0, -u * 0.9 - len, 0);
+        g.addColorStop(0, 'rgba(235,255,255,0.95)');
+        g.addColorStop(0.3, 'rgba(90,240,255,0.72)');
+        g.addColorStop(1, 'rgba(34,211,238,0)');
+        ctx.beginPath();
+        ctx.moveTo(-u * 0.86, ey - u * 0.2);
+        ctx.lineTo(-u * 0.86 - len, ey);
+        ctx.lineTo(-u * 0.86, ey + u * 0.2);
+        ctx.closePath();
+        ctx.fillStyle = g;
+        ctx.fill();
+      }
+      ND.drawGlow(ctx, '#22d3ee', -u * 1.0, 0, u * 1.8, 0.18 + thrust * 0.22);
+    }
 
-    ctx.fillStyle = flash ? '#ffffff' : '#0b2530';
-    ctx.fill();
-    ctx.lineWidth = 2.2;
-    ctx.strokeStyle = flash ? '#ffffff' : (this.invuln > 0 ? '#ff8fb0' : '#5ff0ff');
-    ctx.shadowColor = this.invuln > 0 ? '#ff3b6b' : '#22d3ee';
-    ctx.shadowBlur = 16;
+    // ---- hull ----
+    // A wide translucent stroke underneath fakes the neon bloom.
+    hullPath();
+    ctx.strokeStyle = 'rgba(34,211,238,0.26)';
+    ctx.lineWidth = 7;
+    ctx.lineJoin = 'round';
     ctx.stroke();
-    ctx.shadowBlur = 0;
 
-    // cockpit
-    ctx.beginPath();
-    ctx.arc(0, 0, (3.2 + Math.sin(t * 6) * 0.6) * this.scale, 0, TAU);
-    ctx.fillStyle = '#d8feff';
-    ctx.shadowColor = '#bff6ff';
-    ctx.shadowBlur = 10;
+    const hg = ctx.createLinearGradient(u * 2.1, 0, -u * 1.1, 0);
+    hg.addColorStop(0, flash ? '#ffffff' : '#3d9fb8');
+    hg.addColorStop(0.45, flash ? '#ffffff' : '#11455a');
+    hg.addColorStop(1, flash ? '#ffffff' : '#061520');
+    hullPath();
+    ctx.fillStyle = hg;
     ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.strokeStyle = flash ? '#ffffff' : (this.invuln > 0 ? '#ff8fb0' : '#c8fdff');
+    ctx.lineWidth = 1.9;
+    ctx.stroke();
+
+    // Inner plate: a second, narrower silhouette gives the hull depth.
+    const inner = [
+      [1.82, 0.00],
+      [0.50, 0.22],
+      [-0.32, 0.27],
+      [-0.86, 0.13],
+      [-0.86, 0.00]
+    ];
+    ctx.beginPath();
+    ctx.moveTo(inner[0][0] * u, 0);
+    for (let i = 1; i < inner.length; i++) ctx.lineTo(inner[i][0] * u, inner[i][1] * u);
+    for (let i = inner.length - 2; i >= 0; i--) ctx.lineTo(inner[i][0] * u, -inner[i][1] * u);
+    ctx.closePath();
+    ctx.fillStyle = flash ? '#ffffff' : 'rgba(2,10,16,0.38)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,250,255,0.32)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    // Wing stripes.
+    ctx.strokeStyle = 'rgba(34,211,238,0.75)';
+    ctx.lineWidth = 1;
+    for (let s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.moveTo(-0.02 * u, s * 0.52 * u);
+      ctx.lineTo(-0.62 * u, s * 1.26 * u);
+      ctx.stroke();
+    }
+
+    // Bright spine: gives the silhouette a clear axis even at 30px.
+    ctx.strokeStyle = 'rgba(220,255,255,0.55)';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(2.05 * u, 0);
+    ctx.lineTo(0.55 * u, 0);
+    ctx.stroke();
+
+    // ---- cockpit ----
+    const cg = ctx.createLinearGradient(0.95 * u, 0, -0.25 * u, 0);
+    cg.addColorStop(0, '#ffffff');
+    cg.addColorStop(0.55, '#a9f7ff');
+    cg.addColorStop(1, '#1aa6c4');
+    ctx.beginPath();
+    ctx.moveTo(0.98 * u, 0);
+    ctx.quadraticCurveTo(0.35 * u, 0.23 * u, -0.12 * u, 0.13 * u);
+    ctx.quadraticCurveTo(-0.30 * u, 0, -0.12 * u, -0.13 * u);
+    ctx.quadraticCurveTo(0.35 * u, -0.23 * u, 0.98 * u, 0);
+    ctx.closePath();
+    ctx.fillStyle = flash ? '#ffffff' : cg;
+    ctx.fill();
+
+    // ---- navigation lights ----
+    const pulse = 0.55 + Math.sin(t * 5.5) * 0.3;
+    ND.drawGlow(ctx, '#ff6bd6', -0.62 * u, 1.3 * u, u * 0.55, pulse * 0.9);
+    ND.drawGlow(ctx, '#8ef0ff', -0.62 * u, -1.3 * u, u * 0.55, pulse * 0.9);
+
+    // Invulnerability flicker.
+    if (this.invuln > 0) {
+      ND.drawGlow(ctx, '#ff3b6b', 0, 0, u * 2.2, 0.14 + Math.sin(t * 28) * 0.07);
+    }
 
     ctx.restore();
   };
@@ -624,40 +773,148 @@
     }
   };
 
+  // Enemy art. One readable silhouette per type, so a wave can be parsed at a
+  // glance: darts chase, diamonds drift, pentagons shoot, hexagons tank, stars
+  // split. The aura is an additive sprite rather than a blur pass.
   ND.drawEnemy = function (ctx, e) {
+    const t = performance.now() / 1000;
+    const hpT = e.hp / e.maxHp;
+    const col = e.flash > 0 ? '#ffffff' : e.color;
+    const r = e.r;
+
+    // One glow only for bosses: a sprite per enemy was measurably slower than
+    // the wide translucent stroke below, which already reads as neon bloom.
+    if (e.boss) ND.drawGlow(ctx, col, e.x, e.y, r * 3.4, 0.42);
+
     ctx.save();
     ctx.translate(e.x, e.y);
     ctx.rotate(e.angle);
 
-    const hpT = e.hp / e.maxHp;
-    const col = e.flash > 0 ? '#ffffff' : e.color;
-
-    ctx.beginPath();
-    for (let i = 0; i < e.sides; i++) {
-      const a = (i / e.sides) * TAU - Math.PI / 2;
-      const px = Math.cos(a) * e.r;
-      const py = Math.sin(a) * e.r;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    function poly(n, scale, rot) {
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = (rot || 0) + (i / n) * TAU;
+        const px = Math.cos(a) * r * scale;
+        const py = Math.sin(a) * r * scale;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
     }
-    ctx.closePath();
 
-    ctx.fillStyle = 'rgba(8,10,18,0.86)';
-    ctx.fill();
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = col;
-    ctx.shadowColor = col;
-    ctx.shadowBlur = 14;
+    // ---- silhouette ----
+    if (e.type === 'chaser') {
+      // Dart: sharp nose, notched tail. Reads as "coming at you".
+      ctx.beginPath();
+      ctx.moveTo(r * 1.35, 0);
+      ctx.lineTo(-r * 0.62, r * 0.92);
+      ctx.lineTo(-r * 0.3, 0);
+      ctx.lineTo(-r * 0.62, -r * 0.92);
+      ctx.closePath();
+    } else if (e.type === 'splitter') {
+      // Eight-point star with alternating long/short spikes.
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * TAU;
+        const rad = r * (i % 2 ? 0.52 : 1.08);
+        const px = Math.cos(a) * rad;
+        const py = Math.sin(a) * rad;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    } else {
+      poly(e.sides, 1, 0);
+    }
+
+    // Wide dim stroke under the bright one fakes the bloom.
+    ctx.strokeStyle = 'rgba(' + ND.toRgb(col) + ',0.18)';
+    ctx.lineWidth = 7;
+    ctx.lineJoin = 'round';
     ctx.stroke();
 
-    // inner core
+    ctx.fillStyle = e.flash > 0 ? 'rgba(255,255,255,0.92)' : 'rgba(8,10,18,0.88)';
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = e.boss ? 2.6 : 1.9;
+    ctx.stroke();
+
+    // ---- type details ----
+    if (e.type === 'drifter') {
+      // Two counter-rotating arc segments: a slow, hypnotic orbit.
+      ctx.lineWidth = 1.2;
+      for (let s = 0; s < 2; s++) {
+        const base = t * (s ? -0.9 : 1.3) + s * Math.PI;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.3, base, base + 1.15);
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    } else if (e.type === 'shooter') {
+      // Barrel + muzzle.
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(r * 0.55, -r * 0.17, r * 0.95, r * 0.34);
+      ctx.globalAlpha = 1;
+      ND.drawGlow(ctx, col, r * 1.5, 0, r * 0.5, 0.75);
+    } else if (e.type === 'tank') {
+      // Armour plate + rivets.
+      poly(6, 0.62, Math.PI / 6);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = 0.55;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = col;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + Math.PI / 6;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r * 0.78, Math.sin(a) * r * 0.78, r * 0.09, 0, TAU);
+        ctx.fill();
+      }
+    } else if (e.type === 'chaser') {
+      // Spine highlight.
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(r * 1.1, 0);
+      ctx.lineTo(-r * 0.25, 0);
+      ctx.stroke();
+    } else if (e.type === 'splitter') {
+      // Inner gear ring.
+      poly(6, 0.44, t * 1.4);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.1;
+      ctx.globalAlpha = 0.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    if (e.boss) {
+      // Boss gets two counter-rotating rings around the body.
+      ctx.lineWidth = 1.6;
+      for (let s = 0; s < 2; s++) {
+        const a0 = t * (s ? -0.55 : 0.8);
+        ctx.beginPath();
+        ctx.arc(0, 0, r * (1.5 + s * 0.35), a0, a0 + 2.4);
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.55;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- core ----
+    const pulse = 0.55 + Math.sin(t * 4 + e.seed) * 0.28;
     ctx.beginPath();
-    ctx.arc(0, 0, e.r * 0.32, 0, TAU);
+    ctx.arc(0, 0, r * (e.boss ? 0.3 : 0.26), 0, TAU);
     ctx.fillStyle = col;
-    ctx.globalAlpha = 0.6 + Math.sin(performance.now() / 200 + e.seed) * 0.25;
+    ctx.globalAlpha = pulse;
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
+
     ctx.restore();
 
     // hp bar

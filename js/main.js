@@ -33,6 +33,9 @@
     launchFx: null
   };
   ND.game = game;
+  // Exposed for profiling: renders one frame synchronously without advancing
+  // the simulation, so draw cost can be measured independently of vsync.
+  ND.drawFrame = function () { draw(); };
 
   // ---------------- camera ----------------
   // The world wraps, so the camera wraps too — it is never clamped, and the
@@ -760,33 +763,157 @@
     if (p.hp <= 0) die();
   }
 
-  // ---------------- draw ----------------
-  function drawGrid(ctx, camX, camY) {
-    const size = 96;
-    ctx.lineWidth = 1;
-    const startX = -(camX % size);
-    const startY = -(camY % size);
+  // ---------------- cached backdrop ----------------
+  // Everything static is pre-rendered: the per-frame cost drops from a radial
+  // gradient, a few hundred grid marks and another full-screen gradient to a
+  // handful of pattern fills. Layers scroll at different rates for depth.
+  const BG_TILE = 1024;
+  let bgBase = null, bgVignette = null, bgNebula = null;
+  let bgStars = null, gridTile = null;
+  let gridPattern = null, nebulaPattern = null, starPattern = null;
+  let bgW = 0, bgH = 0;
 
-    ctx.strokeStyle = 'rgba(34, 211, 238, 0.075)';
-    ctx.beginPath();
-    for (let x = startX; x < ND.view.w; x += size) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, ND.view.h);
-    }
-    for (let y = startY; y < ND.view.h; y += size) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(ND.view.w, y);
-    }
-    ctx.stroke();
+  function offscreen(w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  }
 
-    // brighter intersections
-    ctx.fillStyle = 'rgba(34, 211, 238, 0.16)';
-    for (let x = startX; x < ND.view.w; x += size) {
-      for (let y = startY; y < ND.view.h; y += size) {
-        ctx.fillRect(x - 1, y - 1, 2, 2);
+  function buildScreenCaches() {
+    const w = Math.max(1, ND.view.w);
+    const h = Math.max(1, ND.view.h);
+    if (w === bgW && h === bgH) return;
+    bgW = w;
+    bgH = h;
+
+    bgBase = offscreen(w, h);
+    const b = bgBase.getContext('2d');
+    const g = b.createRadialGradient(w / 2, h * 0.44, 40, w / 2, h * 0.44, Math.max(w, h) * 0.85);
+    g.addColorStop(0, '#0b1628');
+    g.addColorStop(0.45, '#070d18');
+    g.addColorStop(1, '#02040a');
+    b.fillStyle = g;
+    b.fillRect(0, 0, w, h);
+    // Directional wash so the arena is not a flat black field.
+    const g2 = b.createLinearGradient(0, 0, w, h);
+    g2.addColorStop(0, 'rgba(34,211,238,0.055)');
+    g2.addColorStop(0.5, 'rgba(0,0,0,0)');
+    g2.addColorStop(1, 'rgba(160,107,255,0.065)');
+    b.fillStyle = g2;
+    b.fillRect(0, 0, w, h);
+
+    bgVignette = offscreen(w, h);
+    const v = bgVignette.getContext('2d');
+    const vg = v.createRadialGradient(
+      w / 2, h / 2, Math.min(w, h) * 0.32,
+      w / 2, h / 2, Math.max(w, h) * 0.8
+    );
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(0.7, 'rgba(0,0,0,0.26)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.78)');
+    v.fillStyle = vg;
+    v.fillRect(0, 0, w, h);
+  }
+
+  function buildNebula() {
+    const S = BG_TILE;
+    bgNebula = offscreen(S, S);
+    const g = bgNebula.getContext('2d');
+    const blobs = [
+      { x: 0.2, y: 0.3, r: 0.44, c: '34,211,238', a: 0.15 },
+      { x: 0.74, y: 0.64, r: 0.52, c: '160,107,255', a: 0.15 },
+      { x: 0.52, y: 0.12, r: 0.3, c: '255,59,107', a: 0.075 },
+      { x: 0.92, y: 0.22, r: 0.26, c: '59,255,158', a: 0.045 },
+      { x: 0.34, y: 0.88, r: 0.38, c: '34,211,238', a: 0.07 }
+    ];
+    // Each blob is stamped nine times so the tile is seamless when repeated.
+    for (const bl of blobs) {
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          const cx = (bl.x + ox) * S;
+          const cy = (bl.y + oy) * S;
+          const rr = bl.r * S;
+          const grd = g.createRadialGradient(cx, cy, 0, cx, cy, rr);
+          grd.addColorStop(0, 'rgba(' + bl.c + ',' + bl.a + ')');
+          grd.addColorStop(0.5, 'rgba(' + bl.c + ',' + (bl.a * 0.38) + ')');
+          grd.addColorStop(1, 'rgba(' + bl.c + ',0)');
+          g.fillStyle = grd;
+          g.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+        }
       }
     }
+    nebulaPattern = ctx.createPattern(bgNebula, 'repeat');
   }
+
+  function buildStars() {
+    const S = BG_TILE;
+    bgStars = offscreen(S, S);
+    const g = bgStars.getContext('2d');
+    for (let i = 0; i < 320; i++) {
+      const x = Math.random() * S;
+      const y = Math.random() * S;
+      const big = Math.random() < 0.12;
+      const s = big ? 2.2 : 1.1;
+      const a = big ? 0.4 + Math.random() * 0.45 : 0.1 + Math.random() * 0.32;
+      g.fillStyle = 'rgba(' + (big ? '225,250,255' : '170,220,255') + ',' + a + ')';
+      g.fillRect(x, y, s, s);
+      if (big && Math.random() < 0.4) {
+        g.fillStyle = 'rgba(140,240,255,' + (a * 0.45) + ')';
+        g.fillRect(x - 4, y + s / 2 - 0.5, 10, 1);
+        g.fillRect(x + s / 2 - 0.5, y - 4, 1, 10);
+      }
+    }
+    starPattern = ctx.createPattern(bgStars, 'repeat');
+  }
+
+  function buildGridTile() {
+    const S = 96;
+    gridTile = offscreen(S, S);
+    const g = gridTile.getContext('2d');
+    g.strokeStyle = 'rgba(34,211,238,0.07)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0.5, 0);
+    g.lineTo(0.5, S);
+    g.moveTo(0, 0.5);
+    g.lineTo(S, 0.5);
+    g.stroke();
+    g.fillStyle = 'rgba(34,211,238,0.17)';
+    g.fillRect(0, 0, 2, 2);
+    gridPattern = ctx.createPattern(gridTile, 'repeat');
+  }
+
+  // Scroll a repeating texture. The pattern is anchored to the current
+  // transform, so a single translate aligns it to world space.
+  function drawTiledPattern(pat, offX, offY, size, alpha) {
+    if (!pat) return;
+    const ox = -(((offX % size) + size) % size);
+    const oy = -(((offY % size) + size) % size);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(ox, oy);
+    ctx.fillStyle = pat;
+    ctx.fillRect(0, 0, ND.view.w + size, ND.view.h + size);
+    ctx.restore();
+  }
+
+  function drawBackdrop(camX, camY) {
+    buildScreenCaches();
+    ctx.drawImage(bgBase, 0, 0);
+    const t = performance.now() / 1000;
+    // The nebula is the most expensive layer (a full-screen texture blend), so
+    // the lowest quality tier drops it and keeps the stars + grid.
+    if (ND.quality > 0) {
+      // It drifts on its own, independent of the camera, so the field never
+      // feels pinned to the ship.
+      drawTiledPattern(nebulaPattern, camX * 0.09 + t * 2.2, camY * 0.09 + t * 1.1, BG_TILE, 0.95);
+      drawTiledPattern(starPattern, camX * 0.28 + t * 0.6, camY * 0.28 + t * 0.3, BG_TILE, 1);
+    }
+    drawTiledPattern(gridPattern, camX, camY, 96, 1);
+  }
+
+  ND.onResize = function () { buildScreenCaches(); };
 
   // The world is a torus, so a single screen can show two edges of it at once.
   // These return the world-space offsets we must draw each object at for the
@@ -869,27 +996,75 @@
     ctx.restore();
   }
 
-  function drawBullet(ctx, b) {
+  // Batched bullet rendering. Every round used to set up its own shadow and
+  // stroke; grouping by colour collapses a 150-round screen into two or three
+  // strokes plus one fill, with no blur passes at all.
+  function drawBullets(ctx) {
+    if (!game.bullets.length) return;
+    const x0 = drawCamX - 70, x1 = drawCamX + ND.view.w + 70;
+    const y0 = drawCamY - 70, y1 = drawCamY + ND.view.h + 70;
+    const groups = new Map();
+
+    for (let bi = 0; bi < game.bullets.length; bi++) {
+      const b = game.bullets[bi];
+      const speed = Math.hypot(b.vx, b.vy) || 1;
+      const tx = -b.vx / speed;
+      const ty = -b.vy / speed;
+      const w = (b.r * 1.5) * (b.width || 1);
+      const len = b.hostile ? 8 : 16 + (b.r * 1.5) * (b.width || 1);
+
+      for (let i = 0; i < tilesX.length; i++) {
+        const x = b.x + tilesX[i];
+        if (x < x0 || x > x1) continue;
+        for (let j = 0; j < tilesY.length; j++) {
+          const y = b.y + tilesY[j];
+          if (y < y0 || y > y1) continue;
+          let g = groups.get(b.color);
+          if (!g) { g = { width: 0, tr: [], core: [] }; groups.set(b.color, g); }
+          if (w > g.width) g.width = w;
+          g.tr.push(x, y, tx, ty, len);
+          g.core.push(x, y, b.r);
+        }
+      }
+    }
+
     ctx.save();
-    const speed = Math.hypot(b.vx, b.vy) || 1;
-    const tx = -b.vx / speed;
-    const ty = -b.vy / speed;
-    const len = b.hostile ? 8 : 16 + (b.r * 1.5) * (b.width || 1);
-
-    ctx.strokeStyle = b.color;
-    ctx.lineWidth = (b.r * 1.5) * (b.width || 1);
     ctx.lineCap = 'round';
-    ctx.shadowColor = b.color;
-    ctx.shadowBlur = 14;
-    ctx.beginPath();
-    ctx.moveTo(b.x, b.y);
-    ctx.lineTo(b.x + tx * len, b.y + ty * len);
-    ctx.stroke();
+    for (const [color, g] of groups) {
+      const tr = g.tr;
 
-    ctx.beginPath();
-    ctx.fillStyle = '#ffffff';
-    ctx.arc(b.x, b.y, b.r * 0.62, 0, TAU);
-    ctx.fill();
+      // Wide, dim under-stroke reads as neon bloom without a blur.
+      ctx.globalAlpha = 0.14;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = g.width * 3.4;
+      ctx.beginPath();
+      for (let i = 0; i < tr.length; i += 5) {
+        ctx.moveTo(tr[i], tr[i + 1]);
+        ctx.lineTo(tr[i] + tr[i + 2] * tr[i + 4], tr[i + 1] + tr[i + 3] * tr[i + 4]);
+      }
+      ctx.stroke();
+
+      // Bright tracer.
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = g.width;
+      ctx.beginPath();
+      for (let i = 0; i < tr.length; i += 5) {
+        ctx.moveTo(tr[i], tr[i + 1]);
+        ctx.lineTo(tr[i] + tr[i + 2] * tr[i + 4], tr[i + 1] + tr[i + 3] * tr[i + 4]);
+      }
+      ctx.stroke();
+
+      // White-hot cores, all in a single path.
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      const core = g.core;
+      for (let i = 0; i < core.length; i += 3) {
+        const cx = core[i], cy = core[i + 1], cr = core[i + 2] * 0.62;
+        ctx.moveTo(cx + cr, cy);
+        ctx.arc(cx, cy, cr, 0, TAU);
+      }
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -999,12 +1174,14 @@
     ctx.fillStyle = '#22d3ee';
     ctx.fillText('WAVE ' + game.wave + '  ·  ' + Math.round(game.time) + 's', ND.view.w - 22, 80);
 
-    // dash indicator
+    // dash indicator. On touch the bottom centre also carries the pause and
+    // upgrade chips, so the whole readout moves up out of their way.
+    const hudBottom = ND.isTouch ? 96 : 22;
     ctx.textAlign = 'center';
     ctx.font = '700 10px ui-monospace, monospace';
     const ready = p.dashCd <= 0;
     ctx.fillStyle = ready ? '#22d3ee' : '#37505e';
-    ctx.fillText(ready ? 'DASH READY' : 'DASH ' + p.dashCd.toFixed(1) + 's', ND.view.w / 2, ND.view.h - 22);
+    ctx.fillText(ready ? 'DASH READY' : 'DASH ' + p.dashCd.toFixed(1) + 's', ND.view.w / 2, ND.view.h - hudBottom);
 
     // weapon selector
     const w = p.weaponDef();
@@ -1012,11 +1189,14 @@
     ctx.fillStyle = w.color;
     ctx.shadowColor = w.color;
     ctx.shadowBlur = 12;
-    ctx.fillText('◄ ' + w.name + ' ►', ND.view.w / 2, ND.view.h - 42);
+    ctx.fillText('◄ ' + w.name + ' ►', ND.view.w / 2, ND.view.h - hudBottom - 20);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#4d6478';
-    ctx.font = '600 9px ui-monospace, monospace';
-    ctx.fillText('Q / E', ND.view.w / 2, ND.view.h - 60);
+    if (!ND.isTouch) {
+      // Keyboard hint only; touch players have an on-screen SWAP button.
+      ctx.fillStyle = '#4d6478';
+      ctx.font = '600 9px ui-monospace, monospace';
+      ctx.fillText('Q / E', ND.view.w / 2, ND.view.h - hudBottom - 38);
+    }
 
     // killstreak
     if (game.killstreak >= 10) {
@@ -1024,9 +1204,67 @@
       ctx.fillStyle = '#ffe066';
       ctx.shadowColor = '#ffb020';
       ctx.shadowBlur = 18;
-      ctx.fillText('x' + game.killstreak + ' STREAK', ND.view.w / 2, ND.view.h - 48);
+      ctx.fillText('x' + game.killstreak + ' STREAK', ND.view.w / 2, ND.view.h - hudBottom - 26);
       ctx.shadowBlur = 0;
     }
+    ctx.restore();
+  }
+
+  // On-screen thumb sticks. They float: the ring appears where the thumb
+  // lands, which is far more comfortable than a fixed pad. When idle, faint
+  // hints sit in the corners so the control scheme is discoverable.
+  function drawTouchUI(ctx) {
+    if (!ND.isTouch) return;
+    const R = Math.max(46, Math.min(78, ND.view.w * 0.14));
+    const t = performance.now() / 1000;
+
+    ctx.save();
+    if (!ND.sticks.length) {
+      const spots = [
+        { x: R + 26, y: ND.view.h - R - 26, c: '34,211,238', label: 'MOVE' },
+        // Aim sits higher than the action buttons, so the hint is never hidden
+        // under DASH/SWAP.
+        { x: ND.view.w - R - 26, y: ND.view.h - R - 150, c: '255,107,214', label: 'AIM' }
+      ];
+      ctx.globalAlpha = 0.16 + Math.sin(t * 2) * 0.04;
+      for (const s of spots) {
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, R * 0.7, 0, TAU);
+        ctx.strokeStyle = 'rgba(' + s.c + ',0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(' + s.c + ',0.16)';
+        ctx.font = '700 9px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(s.label, s.x, s.y + 3);
+      }
+    } else {
+      for (const s of ND.sticks) {
+        const rgb = s.role === 'move' ? '34,211,238' : '255,107,214';
+        const dx = s.x - s.ox, dy = s.y - s.oy;
+        const m = Math.hypot(dx, dy) || 1;
+        const k = Math.min(1, s.r / m);
+        const kx = s.ox + dx * k, ky = s.oy + dy * k;
+
+        ctx.globalAlpha = 0.95;
+        ctx.beginPath();
+        ctx.arc(s.ox, s.oy, s.r, 0, TAU);
+        ctx.fillStyle = 'rgba(' + rgb + ',0.06)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(' + rgb + ',0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(kx, ky, s.r * 0.36, 0, TAU);
+        ctx.fillStyle = 'rgba(' + rgb + ',0.55)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(' + rgb + ',0.95)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
     ctx.restore();
   }
 
@@ -1074,17 +1312,8 @@
 
     ctx.setTransform(ND.view.dpr, 0, 0, ND.view.dpr, 0, 0);
 
-    // backdrop
-    const bg = ctx.createRadialGradient(
-      ND.view.w / 2, ND.view.h / 2, 60,
-      ND.view.w / 2, ND.view.h / 2, Math.max(ND.view.w, ND.view.h) * 0.8
-    );
-    bg.addColorStop(0, '#0a1220');
-    bg.addColorStop(1, '#03050a');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, ND.view.w, ND.view.h);
-
-    drawGrid(ctx, camX, camY);
+    // backdrop (pre-rendered layers, see buildScreenCaches)
+    drawBackdrop(camX, camY);
 
     tilesX = tileOffsets(camX, ND.view.w, ND.WORLD.w);
     tilesY = tileOffsets(camY, ND.view.h, ND.WORLD.h);
@@ -1133,6 +1362,12 @@
     ctx.save();
     ctx.translate(-camX, -camY);
 
+    // Ambient pool of light under the ship: one additive sprite, and it makes
+    // the player readable against the nebula without brightening the whole map.
+    if (game.player) {
+      ND.drawGlow(ctx, '#22d3ee', game.player.x, game.player.y, 380, 0.055);
+    }
+
     // pickups
     for (const pk of game.pickups) {
       drawTiled(pk.x, pk.y, 40, () => drawPickup(ctx, pk));
@@ -1143,10 +1378,9 @@
       drawTiled(e.x, e.y, 80, () => ND.drawEnemy(ctx, e));
     }
 
-    // bullets
-    for (const b of game.bullets) {
-      drawTiled(b.x, b.y, 40, () => drawBullet(ctx, b));
-    }
+    // bullets (batched by colour: one path per colour instead of one blur
+    // pass per round, which is what made dense waves expensive)
+    drawBullets(ctx);
 
     // ---- special effects, under the ship ----
     // BLACK HOLE: a dark core with a spinning accretion ring.
@@ -1247,15 +1481,8 @@
     drawTexts(ctx, camX, camY);
     ctx.restore();
 
-    // screen edge vignette
-    const vg = ctx.createRadialGradient(
-      ND.view.w / 2, ND.view.h / 2, Math.min(ND.view.w, ND.view.h) * 0.34,
-      ND.view.w / 2, ND.view.h / 2, Math.max(ND.view.w, ND.view.h) * 0.78
-    );
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.72)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, ND.view.w, ND.view.h);
+    // screen edge vignette (pre-rendered at the current size)
+    if (bgVignette) ctx.drawImage(bgVignette, 0, 0);
 
     // low-hp red pulse
     if (game.player && game.player.hp / game.player.maxHp < 0.3 && game.state === 'playing') {
@@ -1271,6 +1498,7 @@
     if (hudVisible && fxT > 0.45) {
       drawHUD(ctx);
       drawBossBar(ctx);
+      drawTouchUI(ctx);
     }
 
     // The launch wipe sits above the HUD: for a moment the player shouldn't see
@@ -1287,6 +1515,9 @@
     if (!isFinite(dt) || dt < 0) dt = 0;
     last = now;
     dt = Math.min(dt, 0.05);
+
+    // Adaptive resolution: drop a tier if the device cannot hold ~45fps.
+    ND.sampleFrame(dt);
 
     if (game.state === 'playing') update(dt);
     else if (game.state === 'menu') updateAttract(dt);
@@ -1539,78 +1770,67 @@
 
         ctx.save();
         ctx.lineCap = 'round';
-        ctx.strokeStyle = b.crit ? '#ffd166' : '#8ef0ff';
-        ctx.lineWidth = b.crit ? 7 : 5;
-        ctx.shadowColor = ctx.strokeStyle;
-        ctx.shadowBlur = 24;
+        const bcol = b.crit ? '#ffd166' : '#8ef0ff';
+        ctx.strokeStyle = bcol;
+        ctx.globalAlpha = 0.2;
+        ctx.lineWidth = b.crit ? 20 : 15;
         ctx.beginPath();
         ctx.moveTo(b.x, b.y);
         ctx.lineTo(b.x + tx * len, b.y + ty * len);
         ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = b.crit ? 7 : 5;
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x + tx * len, b.y + ty * len);
+        ctx.stroke();
+        ND.drawGlow(ctx, bcol, b.x, b.y, b.crit ? 16 : 12, 0.85);
 
         // hot core
         ctx.beginPath();
         ctx.fillStyle = '#ffffff';
-        ctx.shadowBlur = 16;
-        ctx.shadowColor = '#ffffff';
         ctx.arc(b.x, b.y, b.crit ? 3.4 : 2.8, 0, TAU);
         ctx.fill();
         ctx.restore();
       });
     }
-    // demo ship: the real silhouette, drawn from a tiny stand-in
-    ctx.save();
-    const p = a;
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.angle);
-    ctx.strokeStyle = '#7df9ff';
-    ctx.fillStyle = 'rgba(34,211,238,0.35)';
-    ctx.lineWidth = 2.4;
-    ctx.shadowColor = '#22d3ee';
-    ctx.shadowBlur = 26;
-    ctx.beginPath();
-    ctx.moveTo(18, 0);
-    ctx.lineTo(-12, 12);
-    ctx.lineTo(-6, 0);
-    ctx.lineTo(-12, -12);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // inner core so the ship reads even at a glance
-    ctx.beginPath();
-    ctx.arc(0, 0, 3.4, 0, TAU);
-    ctx.fillStyle = '#dffcff';
-    ctx.fill();
+    // demo ship: the real silhouette, driven by a tiny stand-in so the demo
+    // and the run never drift apart visually.
+    if (!a.ship) {
+      a.ship = {
+        x: 0, y: 0, angle: 0, vx: 0, vy: 0,
+        r: 13 * ND.SHIP_SCALE * 1.55,
+        scale: ND.SHIP_SCALE * 1.55,
+        speed: 320, dashCd: 0, dashMax: 1.6, invuln: 0, hurtFlash: 0
+      };
+    }
+    const sh = a.ship;
+    sh.x = a.x; sh.y = a.y; sh.angle = a.angle;
+    sh.vx = a.vx; sh.vy = a.vy;
+    ND.Player.prototype.draw.call(sh, ctx);
 
     // muzzle flash, drawn in the ship's own frame
     if (a.muzzle > 0) {
       const k = a.muzzle / 0.09;
       ctx.save();
-      ctx.rotate(a.muzzleAngle - a.angle);
+      ctx.translate(a.x, a.y);
+      ctx.rotate(a.muzzleAngle);
       ctx.globalAlpha = k;
       ctx.fillStyle = '#dffcff';
-      ctx.shadowColor = '#7df9ff';
-      ctx.shadowBlur = 24;
+      ND.drawGlow(ctx, '#7df9ff', 30, 0, 24 * k, 0.9);
       ctx.beginPath();
-      ctx.moveTo(18, 0);
-      ctx.lineTo(30 + 8 * k, 0);
-      ctx.lineTo(18, 5 * k);
+      ctx.moveTo(26, 0);
+      ctx.lineTo(38 + 8 * k, 0);
+      ctx.lineTo(26, 5 * k);
       ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(20, 0, 2.6 * k, 0, TAU);
       ctx.fill();
       ctx.restore();
     }
-    ctx.restore();
 
     // engine trail
     ctx.save();
     ctx.globalAlpha = 0.5;
-    ctx.fillStyle = 'rgba(34,211,238,0.5)';
-    ctx.beginPath();
-    ctx.arc(p.x - Math.cos(p.angle) * 14, p.y - Math.sin(p.angle) * 14, 5, 0, TAU);
-    ctx.fill();
+    ND.drawGlow(ctx, '#22d3ee', a.x - Math.cos(a.angle) * 16, a.y - Math.sin(a.angle) * 16, 12, 0.55);
     ctx.restore();
 
     ND.drawParticles(ctx, camX, camY, tilesX, tilesY);
@@ -1749,6 +1969,9 @@
     game.state = 'upgrade';
     game.freeSpend = !!free;
     ND.mouse.down = false;
+    // Do not let a queued dash/swap fire the moment the shop closes.
+    ND.actions.dash = false;
+    ND.actions.swap = 0;
     ND.audio.play('level');
 
     // Weapon upgrades only make sense for the weapon you are actually holding.
@@ -2495,6 +2718,8 @@
   // The DOM control bar and build tracker, toggled together.
   function setRunChrome(on) {
     $('hudbar').classList.toggle('hidden', !on);
+    const tb = $('touchbar');
+    if (tb) tb.classList.toggle('hidden', !on);
     setBuildVisible(!!on);
   }
 
@@ -2524,11 +2749,14 @@
     if (game.state !== 'playing') return;
     game.state = 'paused';
     ND.mouse.down = false;
+    ND.actions.dash = false;
+    ND.actions.swap = 0;
     if (ND.music.ctx) ND.music.ctx.suspend();
     $('pause').classList.remove('hidden');
     // The pause overlay owns the screen; the in-run panels would just show
     // through it at different opacities.
     $('hudbar').classList.add('hidden');
+    $('touchbar').classList.add('hidden');
     setBuildVisible(false);
   }
 
@@ -2539,6 +2767,7 @@
     last = performance.now();
     $('pause').classList.add('hidden');
     $('hudbar').classList.remove('hidden');
+    $('touchbar').classList.remove('hidden');
     setBuildVisible(true);
   }
 
@@ -2550,6 +2779,7 @@
     ND.keys.clear();
     hideAllOverlays();
     $('hudbar').classList.add('hidden');
+    $('touchbar').classList.add('hidden');
     setBuildVisible(false);
     if ($('specials')) $('specials').innerHTML = '';
     clearWorld();
@@ -2715,6 +2945,33 @@
     if (game.state === 'playing') pauseGame();
     else if (game.state === 'paused') resumeGame();
   });
+
+  // Touch actions. pointerdown (not click) so the response is immediate and
+  // holding the button does not repeat a dash on release.
+  const btnDash = $('btnDash');
+  if (btnDash) {
+    btnDash.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      ND.actions.dash = true;
+    });
+  }
+  const btnSwap = $('btnSwap');
+  if (btnSwap) {
+    btnSwap.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      ND.actions.swap = 1;
+    });
+  }
+  const btnMutePause = $('btnMutePause');
+  if (btnMutePause) {
+    btnMutePause.addEventListener('click', (e) => {
+      e.stopPropagation();
+      muted = !muted;
+      applyMute();
+    });
+  }
   $('btnStop').addEventListener('click', stopGame);
 
   // Build tracker: click the header (or press B on it) to fold the panel away.
@@ -2749,6 +3006,8 @@
       btn.setAttribute('aria-pressed', String(muted));
       btn.setAttribute('aria-label', muted ? 'Sound is off. Turn sound on' : 'Sound is on. Mute sound');
     }
+    const pbtn = $('btnMutePause');
+    if (pbtn) pbtn.textContent = muted ? 'sound: off' : 'sound: on';
     try { localStorage.setItem('neondrift.muted.v1', muted ? '1' : '0'); } catch (e) { /* ignore */ }
   }
 
@@ -2790,6 +3049,16 @@
   });
 
   requestAnimationFrame(frame);
+  if (ND.isTouch) {
+    document.body.classList.add('is-touch');
+    // The build tracker is a big panel; start it folded so it does not cover
+    // the movement thumb. The header still expands it on tap.
+    setBuildCollapsed(true);
+  }
+  buildNebula();
+  buildStars();
+  buildGridTile();
+  buildScreenCaches();
   showMenuBest();
   renderMeta();
   // The title is the first thing anyone sees, so start the demo immediately.

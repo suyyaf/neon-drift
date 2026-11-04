@@ -11,8 +11,26 @@ window.ND = window.ND || {};
   ND.view = { w: 0, h: 0, dpr: 1 };
   ND.WORLD = { w: 1920, h: 1440 };
 
+  // ---------- device class / render quality ----------
+  // Phones report devicePixelRatio 2-3, so a full-screen canvas at native
+  // resolution costs 4-9x the pixels of a 1x display. Rendering at 1.6x is
+  // visually indistinguishable on a phone but roughly halves the fill cost.
+  // Quality is adaptive: if frames start slipping the canvas drops a tier.
+  ND.isTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+    ('ontouchstart' in window && navigator.maxTouchPoints > 0);
+
+  ND.quality = ND.isTouch ? 1 : 2;   // 2 = high, 1 = medium, 0 = low
+  const QUALITY_DPR = [1, 1.5, 2];
+
+  function dprForQuality() {
+    const raw = window.devicePixelRatio || 1;
+    // A touch screen never needs more than 1.6x, even at quality 2.
+    const cap = ND.isTouch ? Math.min(QUALITY_DPR[ND.quality], 1.6) : QUALITY_DPR[ND.quality];
+    return Math.min(raw, cap);
+  }
+
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = dprForQuality();
     ND.view.w = window.innerWidth;
     ND.view.h = window.innerHeight;
     ND.view.dpr = dpr;
@@ -21,9 +39,45 @@ window.ND = window.ND || {};
     canvas.style.width = ND.view.w + 'px';
     canvas.style.height = ND.view.h + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Screen-space caches (backdrop, vignette) must be rebuilt at the new size.
+    if (ND.onResize) ND.onResize();
   }
-  window.addEventListener('resize', resize);
+
+  let resizeRaf = 0;
+  function scheduleResize() {
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; resize(); });
+  }
+  window.addEventListener('resize', scheduleResize);
+  window.addEventListener('orientationchange', scheduleResize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleResize);
   resize();
+
+  // Rolling frame-time average drives automatic quality. Thresholds are
+  // generous (22ms ~= 45fps) because a single slow frame is not a problem and
+  // flapping between tiers is worse than staying one tier lower.
+  let frameAvg = 16.7;
+  let goodFor = 0;
+  let badFor = 0;
+  ND.sampleFrame = function (dt) {
+    if (!(dt > 0) || dt > 0.2) return;
+    frameAvg += (dt * 1000 - frameAvg) * 0.06;
+    if (frameAvg > 22) { badFor++; goodFor = 0; }
+    else if (frameAvg < 13.5) { goodFor++; badFor = 0; }
+    else { badFor = Math.max(0, badFor - 1); goodFor = Math.max(0, goodFor - 1); }
+
+    if (badFor > 100 && ND.quality > 0) {
+      ND.quality--;
+      badFor = 0;
+      frameAvg = 16.7;
+      resize();
+    } else if (goodFor > 420 && ND.quality < (ND.isTouch ? 1 : 2)) {
+      ND.quality++;
+      goodFor = 0;
+      frameAvg = 16.7;
+      resize();
+    }
+  };
 
   // ---------- math ----------
   ND.TAU = Math.PI * 2;
@@ -61,10 +115,67 @@ window.ND = window.ND || {};
     ND.delta(ay, by, ND.WORLD.h)
   );
 
+  // ---------- cached glow sprites ----------
+  // `shadowBlur` is a per-draw Skia blur pass and was the single biggest cost
+  // in the frame: 64 enemies + 150 bullets + hundreds of particles each paid
+  // for their own blur. A pre-rendered radial sprite drawn with the additive
+  // blend looks the same and costs one drawImage.
+  const glowCache = new Map();
+
+  function toRgb(hex) {
+    if (typeof hex !== 'string') return '255,255,255';
+    let h = hex.trim();
+    if (h[0] !== '#') {
+      const m = h.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+      return m ? (m[1] | 0) + ',' + (m[2] | 0) + ',' + (m[3] | 0) : '255,255,255';
+    }
+    h = h.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const n = parseInt(h, 16);
+    if (!isFinite(n)) return '255,255,255';
+    return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+  }
+  ND.toRgb = toRgb;
+
+  ND.glowSprite = function (color) {
+    let c = glowCache.get(color);
+    if (c) return c;
+    const S = 96;
+    c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const rgb = toRgb(color);
+    const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    grd.addColorStop(0, 'rgba(' + rgb + ',0.95)');
+    grd.addColorStop(0.22, 'rgba(' + rgb + ',0.45)');
+    grd.addColorStop(0.5, 'rgba(' + rgb + ',0.14)');
+    grd.addColorStop(1, 'rgba(' + rgb + ',0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, S, S);
+    glowCache.set(color, c);
+    return c;
+  };
+
+  // Additive soft glow. `radius` is the visible half-size.
+  ND.drawGlow = function (ctx, color, x, y, radius, alpha) {
+    const sp = ND.glowSprite(color);
+    const prev = ctx.globalCompositeOperation;
+    const prevA = ctx.globalAlpha;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = (prevA === 1 ? 1 : prevA) * (alpha === undefined ? 1 : alpha);
+    ctx.drawImage(sp, x - radius, y - radius, radius * 2, radius * 2);
+    ctx.globalAlpha = prevA;
+    ctx.globalCompositeOperation = prev;
+  };
+
 
   // ---------- input ----------
   ND.keys = new Set();
   ND.mouse = { x: 0, y: 0, down: false };
+
+  // One-shot actions requested by on-screen buttons (mobile) or any other UI.
+  // The player update consumes and clears them.
+  ND.actions = { dash: false, swap: 0 };
 
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
@@ -90,18 +201,113 @@ window.ND = window.ND || {};
   });
   window.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // ---------- touch / virtual sticks ----------
+  // Two thumbs, the way every mobile twin-stick shooter works:
+  //   left half  -> movement stick
+  //   right half -> aim stick (also sets the firing direction)
+  // Guns auto-fire, and when the aim thumb is idle the ship auto-targets the
+  // nearest hostile, so one-thumb play is viable and aiming is an upgrade,
+  // not a requirement.
+  ND.touchMove = { x: 0, y: 0 };
+  ND.aim = { active: false, x: 1, y: 0 };
+  ND.sticks = [];              // [{role, ox, oy, x, y, r}] for the HUD overlay
+  const STICK_DEAD = 0.16;
+  const pointers = new Map();
+
+  function stickRadius() {
+    return Math.max(46, Math.min(78, ND.view.w * 0.14));
+  }
+
+  function roleFor(x) {
+    // A stick keeps the half it started in, so a thumb drifting across the
+    // midline never steals the other hand's control.
+    const used = new Set([...pointers.values()].map((p) => p.role));
+    if (x < ND.view.w * 0.5) return used.has('move') ? null : 'move';
+    return used.has('aim') ? null : 'aim';
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    const role = roleFor(e.clientX);
+    if (!role) return;
+    e.preventDefault();
+    const r = stickRadius();
+    const p = { id: e.pointerId, role, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY, r };
+    pointers.set(e.pointerId, p);
+    ND.sticks.push(p);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    applyStick(p);
+  }, { passive: false });
+
+  canvas.addEventListener('pointermove', (e) => {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    e.preventDefault();
+    p.x = e.clientX;
+    p.y = e.clientY;
+    applyStick(p);
+  }, { passive: false });
+
+  function endPointer(e) {
+    const p = pointers.get(e.pointerId);
+    if (!p) return;
+    pointers.delete(e.pointerId);
+    const i = ND.sticks.indexOf(p);
+    if (i !== -1) ND.sticks.splice(i, 1);
+    if (p.role === 'move') { ND.touchMove.x = 0; ND.touchMove.y = 0; }
+    else { ND.aim.active = false; }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('lostpointercapture', endPointer);
+
+  function applyStick(p) {
+    let dx = (p.x - p.ox) / p.r;
+    let dy = (p.y - p.oy) / p.r;
+    const m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    if (p.role === 'move') {
+      const mag = Math.hypot(dx, dy);
+      if (mag < STICK_DEAD) { ND.touchMove.x = 0; ND.touchMove.y = 0; }
+      else {
+        // Rescale past the deadzone so fine control still starts at zero.
+        const k = (mag - STICK_DEAD) / (1 - STICK_DEAD) / mag;
+        ND.touchMove.x = dx * k;
+        ND.touchMove.y = dy * k;
+      }
+    } else {
+      const mag = Math.hypot(dx, dy);
+      if (mag < STICK_DEAD) { ND.aim.active = false; }
+      else {
+        ND.aim.active = true;
+        ND.aim.x = dx / mag;
+        ND.aim.y = dy / mag;
+      }
+    }
+  }
+
+  // Releasing focus must not leave a stick stuck on.
+  function clearInputs() {
+    ND.keys.clear();
+    ND.mouse.down = false;
+    pointers.clear();
+    ND.sticks.length = 0;
+    ND.touchMove.x = 0;
+    ND.touchMove.y = 0;
+    ND.aim.active = false;
+    ND.actions.dash = false;
+  }
+
   // Losing focus (alt-tab, clicking another window) must pause, not keep
   // simulating in the background where the player can die unseen.
   window.addEventListener('blur', () => {
-    ND.keys.clear();
-    ND.mouse.down = false;
+    clearInputs();
     if (ND.onBlur) ND.onBlur();
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      ND.keys.clear();
-      ND.mouse.down = false;
+      clearInputs();
       if (ND.onBlur) ND.onBlur();
     }
   });
@@ -170,10 +376,12 @@ window.ND = window.ND || {};
     const x0 = camX - 40, x1 = camX + ND.view.w + 40;
     const y0 = camY - 40, y1 = camY + ND.view.h + 40;
     const multi = txs.length > 1 || tys.length > 1;
-    // Batch by colour: consecutive same-colour particles share one shadowBlur
-    // setting, which is by far the most expensive part of drawing them.
-    let curColor = null;
-    let curGlow = false;
+    // Glow sprites are cheaper than a blur pass per particle, but on the
+    // lowest quality tier plain squares are cheaper still.
+    const useGlow = ND.quality > 0;
+    const prevA = ctx.globalAlpha;
+
+    if (useGlow) ctx.globalCompositeOperation = 'lighter';
 
     for (let i = 0; i < arr.length; i++) {
       const p = arr[i];
@@ -182,23 +390,17 @@ window.ND = window.ND || {};
 
       if (!multi && (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1)) continue;
 
-      if (p.color !== curColor || p.glow !== curGlow) {
-        if (p.glow) {
-          ctx.shadowColor = p.color;
-          ctx.shadowBlur = 10;
-        } else {
-          ctx.shadowBlur = 0;
-        }
-        ctx.fillStyle = p.color;
-        curColor = p.color;
-        curGlow = p.glow;
-      }
-
+      const s = p.size * (0.45 + t * 1.1);
       ctx.globalAlpha = t > 1 ? 1 : t;
-      const s = p.size * (0.4 + t * 0.9);
 
       if (!multi) {
-        ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+        if (useGlow && p.glow) {
+          const r = s * 3.2;
+          ctx.drawImage(ND.glowSprite(p.color), p.x - r, p.y - r, r * 2, r * 2);
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+        }
         continue;
       }
 
@@ -209,13 +411,19 @@ window.ND = window.ND || {};
         for (let b = 0; b < tys.length; b++) {
           const py = p.y + tys[b];
           if (py < y0 || py > y1) continue;
-          ctx.fillRect(px - s / 2, py - s / 2, s, s);
+          if (useGlow && p.glow) {
+            const r = s * 3.2;
+            ctx.drawImage(ND.glowSprite(p.color), px - r, py - r, r * 2, r * 2);
+          } else {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(px - s / 2, py - s / 2, s, s);
+          }
         }
       }
     }
 
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
+    ctx.globalAlpha = prevA;
+    ctx.globalCompositeOperation = 'source-over';
   };
 
   // ---------- screen shake ----------
