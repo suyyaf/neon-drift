@@ -893,12 +893,18 @@
     ctx.restore();
   }
 
+  // The boss bar used to sit at y=64, which is exactly the row the LV/scrap
+  // readout occupies (baseline 68) — at narrow window widths the two drew on
+  // top of each other. It now clears the whole top-left HUD block, whose
+  // lowest line ("PICK IN n", baseline 82) ends here.
+  const BOSS_BAR_Y = 100;
+
   function drawBossBar(ctx) {
     const b = game.boss;
     if (!b) return;
     const w = Math.min(560, ND.view.w * 0.7);
     const x = (ND.view.w - w) / 2;
-    const y = 64;
+    const y = BOSS_BAR_Y;
     const t = Math.max(0, b.hp / b.maxHp);
 
     ctx.save();
@@ -957,7 +963,8 @@
 
     ctx.fillStyle = '#a06bff';
     ctx.font = '700 11px ui-monospace, monospace';
-    ctx.fillText('LV ' + p.level, bx, yb + 20);
+    const lvText = 'LV ' + p.level;
+    ctx.fillText(lvText, bx, yb + 20);
 
     // Next free pick, on its own line to the right of the scrap readout. Derived
     // from the same rule as gainXp(): picks land on levels 2, 5, 8, 11...
@@ -969,13 +976,15 @@
     ctx.font = '700 10px ui-monospace, monospace';
     ctx.fillStyle = pickReady ? '#3bff9e' : '#6b5b8f';
     ctx.fillText(pickReady ? 'PICK READY' : 'PICK IN ' + toGo, bx, yb + 34);
-    // scrap bank — the upgrade currency
+    // scrap bank — the upgrade currency. Offset past the level text rather than
+    // a fixed 62px: at level 100+ "LV 128" ran into the scrap readout.
     ctx.textAlign = 'left';
     ctx.font = '700 11px ui-monospace, monospace';
+    const lvW = ctx.measureText(lvText).width;
     ctx.fillStyle = '#ffd166';
     ctx.shadowColor = '#ffd166';
     ctx.shadowBlur = game.scrapGain > 0.02 ? 14 : 0;
-    ctx.fillText('⬥ ' + game.scrap + ' SCRAP', bx + 62, yb + 20);
+    ctx.fillText('⬥ ' + game.scrap + ' SCRAP', bx + lvW + 16, yb + 20);
     ctx.shadowBlur = 0;
 
     // right side stats
@@ -1024,6 +1033,10 @@
   function drawTexts(ctx, camX, camY) {
     ctx.save();
     ctx.textAlign = 'center';
+    // Banners all sat on one Y, so two overlapping toasts overprinted into an
+    // unreadable smear. Stack them by index instead: the newest goes on top and
+    // everything shifts up. Floating world text is unaffected.
+    let bannerI = 0;
     for (const t of game.texts) {
       const a = Math.max(0, Math.min(1, t.life / t.maxLife));
       ctx.globalAlpha = a;
@@ -1037,8 +1050,13 @@
       } else {
         const size = t.size || Math.min(26, 14 + t.maxLife * 3);
         ctx.font = '800 ' + size + 'px ui-monospace, monospace';
-        // Keep the banner clear of the boss health bar overhead.
-        const y = camY + ND.view.h * 0.24 + (t.maxLife - t.life) * 4;
+        const slot = bannerI++;
+        // Clear both the HUD (top-left) and the boss bar. Using the bar's real
+        // bottom edge beats a fraction of the viewport: at 24% of a short
+        // window the first banner's cap height landed on top of the bar.
+        const bossBarBottom = game.boss ? BOSS_BAR_Y + 7 : 0;
+        const top = Math.max(ND.view.h * 0.24, bossBarBottom + size + 16);
+        const y = camY + top + (t.maxLife - t.life) * 4 + slot * (size + 8);
         ctx.fillText(t.text, camX + ND.view.w / 2, y);
       }
     }

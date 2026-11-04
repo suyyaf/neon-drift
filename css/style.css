@@ -166,6 +166,21 @@ h1 {
   .meta-foot { margin-top: 4px; }
 }
 
+/* Short windows: the title screen still overflowed by ~13px at 670px tall,
+   leaving the launch button jammed against the bottom edge. Tighten the
+   vertical rhythm again so the whole screen fits without scrolling. */
+@media (max-height: 700px) {
+  #start { gap: 6px; padding: 10px 20px; }
+  #start h1 { font-size: clamp(26px, 5.6vw, 44px); }
+  #start .tag { margin-top: -4px; }
+  .board { margin: 2px 0 0; }
+  .meta { margin-top: 4px; padding: 7px 10px 5px; }
+  .meta-row { padding: 4px 7px; }
+  .meta-head { padding-bottom: 5px; }
+  #start .controls { gap: 4px; font-size: 9.5px; line-height: 1.5; }
+  #start #play { padding: 12px 30px; }
+}
+
 h2 { font-size: clamp(24px, 5vw, 40px); color: var(--cyan); text-shadow: 0 0 22px rgba(34, 211, 238, 0.6); }
 
 #gameover h1 {
