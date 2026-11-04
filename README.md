@@ -35,6 +35,23 @@ python -m http.server 8123
 # then visit http://localhost:8123/
 ```
 
+### Title screen
+
+The menu is not a still image: a wordless **attract-mode demo** plays behind it —
+a stand-in pilot kites a handful of chasers, firing and dying on a loop. It runs
+in its own tiny world, so it can never touch a real run's score, scrap, or enemy
+list, and it costs nothing at rest (140 FPS measured with it running).
+
+Pressing **ENTER THE GRID** detonates that demo into a **launch shockwave**: the
+title scales and fades, a white-hot core blooms from screen centre while a ring
+snaps outward and sparks fly. The run is already simulating underneath the
+flash, so there is no loading gap — the shockwave simply clears to reveal the
+fight in progress. The HUD and build tracker are held back until the flash is
+~45% through, so nothing half-initialised flickers behind the light.
+
+That whole transition is skipped when the OS reports
+`prefers-reduced-motion: reduce`.
+
 ## Controls
 
 | Input | Action |

@@ -25,7 +25,12 @@
     boss: null,
     gridOffset: 0,
     killstreak: 0,
-    streakTimer: 0
+    streakTimer: 0,
+    // Attract mode: a wordless demo fight that plays behind the title screen.
+    // It uses its own tiny world so it can be wiped and respawned freely.
+    attract: null,
+    // Counts down after the launch shockwave while the wipe plays out.
+    launchFx: null
   };
   ND.game = game;
 
@@ -1037,8 +1042,11 @@
   }
 
   function draw() {
-    const camX = Math.round(game.camX + ND.rand(-ND.shake, ND.shake) * 0.5);
-    const camY = Math.round(game.camY + ND.rand(-ND.shake, ND.shake) * 0.5);
+    // In attract mode the camera belongs to the demo, not the (absent) run.
+    const attract = game.state === 'menu' && game.attract ? game.attract : null;
+    const shake = ND.shake || 0;
+    const camX = Math.round((attract ? attract.camX : game.camX) + ND.rand(-shake, shake) * 0.5);
+    const camY = Math.round((attract ? attract.camY : game.camY) + ND.rand(-shake, shake) * 0.5);
 
     ctx.setTransform(ND.view.dpr, 0, 0, ND.view.dpr, 0, 0);
 
@@ -1056,6 +1064,29 @@
 
     tilesX = tileOffsets(camX, ND.view.w, ND.WORLD.w);
     tilesY = tileOffsets(camY, ND.view.h, ND.WORLD.h);
+
+    // Attract mode has its own world; the run's arrays are empty on the menu.
+    if (attract) {
+      drawAttract(ctx, camX, camY);
+
+      // Push the demo back so the title stays legible over it.
+      ctx.save();
+      const dim = ctx.createRadialGradient(
+        ND.view.w / 2, ND.view.h * 0.42, 60,
+        ND.view.w / 2, ND.view.h * 0.42, Math.max(ND.view.w, ND.view.h) * 0.85
+      );
+      // Light touch: the demo is the point, so it must stay clearly visible.
+      // Only the very centre (behind the headline) is knocked back.
+      dim.addColorStop(0, 'rgba(3,6,12,0.34)');
+      dim.addColorStop(0.5, 'rgba(3,6,12,0.20)');
+      dim.addColorStop(1, 'rgba(3,6,12,0.55)');
+      ctx.fillStyle = dim;
+      ctx.fillRect(0, 0, ND.view.w, ND.view.h);
+      ctx.restore();
+
+      drawLaunchFx(ctx);
+      return;
+    }
 
     ctx.save();
     ctx.translate(-camX, -camY);
@@ -1191,10 +1222,18 @@
       ctx.fillRect(0, 0, ND.view.w, ND.view.h);
     }
 
-    if (game.state === 'playing' || game.state === 'paused') {
+    // During the launch blast the HUD would flicker in behind a bright flash,
+    // so it holds off until the wave has mostly cleared.
+    const hudVisible = game.state === 'playing' || game.state === 'paused';
+    const fxT = game.launchFx ? game.launchFx.t / game.launchFx.duration : 1;
+    if (hudVisible && fxT > 0.45) {
       drawHUD(ctx);
       drawBossBar(ctx);
     }
+
+    // The launch wipe sits above the HUD: for a moment the player shouldn't see
+    // a half-built HUD behind a fading explosion.
+    drawLaunchFx(ctx);
   }
 
   // ---------------- loop ----------------
@@ -1208,9 +1247,332 @@
     dt = Math.min(dt, 0.05);
 
     if (game.state === 'playing') update(dt);
+    else if (game.state === 'menu') updateAttract(dt);
+
+    // The wipe runs regardless of state so it still plays while the new run is
+    // already simulating underneath.
+    if (game.launchFx) {
+      game.launchFx.t += dt;
+      // Reveal the HTML chrome once the flash has mostly cleared.
+      if (!game.launchFx.chromeShown && game.launchFx.t / game.launchFx.duration > 0.45) {
+        game.launchFx.chromeShown = true;
+        setRunChrome(true);
+      }
+      if (game.launchFx.t >= game.launchFx.duration) game.launchFx = null;
+    }
+
     draw();
 
     requestAnimationFrame(frame);
+  }
+
+  // ---------------- attract mode ----------------
+  // A small, self-contained demo fight behind the title screen: a pilot kites a
+  // handful of chasers forever, so the menu is never a still image. It reuses
+  // the real drawing code (enemies, bullets, particles) but keeps its own
+  // entities, so the run's world is untouched and nothing here can affect
+  // balance.
+  const ATTRACT_MAX = 9;
+
+  function resetAttract() {
+    const w = ND.WORLD.w, h = ND.WORLD.h;
+    const a = {
+      x: w / 2, y: h / 2,
+      vx: 0, vy: 0,
+      angle: 0,
+      cooldown: 0,
+      t: 0,
+      enemies: [],
+      bullets: [],
+      // Camera drifts on its own so the shot never feels locked off.
+      camX: w / 2 - ND.view.w / 2,
+      camY: h / 2 - ND.view.h / 2,
+      orbit: Math.random() * Math.PI * 2
+    };
+    game.attract = a;
+    return a;
+  }
+
+  function spawnAttractEnemy(a) {
+    if (a.enemies.length >= ATTRACT_MAX) return;
+    // Ring spawn just outside the visible edge, like the real spawner.
+    const ang = Math.random() * TAU;
+    const rad = Math.max(ND.view.w, ND.view.h) * 0.62;
+    const x = ND.wrapX(a.x + Math.cos(ang) * rad);
+    const y = ND.wrapY(a.y + Math.sin(ang) * rad);
+    // A throwaway game object so the demo never touches the real spawn list
+    // and always spawns at wave-1 stats regardless of the last run.
+    const shim = { wave: 1, enemies: [] };
+    const e = ND.spawnEnemy('chaser', x, y, shim);
+    if (!e) return;
+    e.hp = e.maxHp = 26;   // three hits, so kills happen on screen
+    e.speed *= 0.85;
+    e.attract = true;
+    a.enemies.push(e);
+  }
+
+  function updateAttract(dt) {
+    const a = game.attract || resetAttract();
+    a.t += dt;
+
+    // --- kite: steer away from the local crowd, drift when clear ---
+    let fx = 0, fy = 0, nearest = null, nd = 1e9;
+    for (const e of a.enemies) {
+      const d = ND.distT(e.x, e.y, a.x, a.y);
+      if (d < nd) { nd = d; nearest = e; }
+      if (d < 260) {
+        const k = (260 - d) / 260;
+        fx += ND.delta(a.x, e.x, ND.WORLD.w) * k * 0.02;
+        fy += ND.delta(a.y, e.y, ND.WORLD.h) * k * 0.02;
+      }
+    }
+    // slow orbit so movement reads as purposeful rather than random
+    a.orbit += dt * 0.5;
+    fx += Math.cos(a.orbit) * 0.35;
+    fy += Math.sin(a.orbit * 1.3) * 0.35;
+
+    const fl = Math.hypot(fx, fy) || 1;
+    const speed = 168;
+    a.vx += ((fx / fl) * speed - a.vx) * Math.min(1, dt * 4);
+    a.vy += ((fy / fl) * speed - a.vy) * Math.min(1, dt * 4);
+    a.x = ND.wrapX(a.x + a.vx * dt);
+    a.y = ND.wrapY(a.y + a.vy * dt);
+
+    // --- aim at the nearest hostile, fire on the real cadence ---
+    if (nearest) {
+      a.angle = Math.atan2(
+        ND.delta(a.y, nearest.y, ND.WORLD.h),
+        ND.delta(a.x, nearest.x, ND.WORLD.w)
+      );
+    }
+    a.cooldown -= dt;
+    if (a.cooldown <= 0) {
+      a.cooldown = 0.13;
+      const sp = 760;
+      const isCrit = Math.random() < 0.12;
+      a.bullets.push({
+        x: a.x + Math.cos(a.angle) * 18,
+        y: a.y + Math.sin(a.angle) * 18,
+        vx: Math.cos(a.angle) * sp,
+        vy: Math.sin(a.angle) * sp,
+        life: 1.1,
+        crit: isCrit
+      });
+      ND.audio.play('shoot');
+    }
+
+    // --- move demo bullets and resolve hits ---
+    for (let i = a.bullets.length - 1; i >= 0; i--) {
+      const b = a.bullets[i];
+      b.x = ND.wrapX(b.x + b.vx * dt);
+      b.y = ND.wrapY(b.y + b.vy * dt);
+      b.life -= dt;
+      if (b.life <= 0) { a.bullets.splice(i, 1); continue; }
+      for (let j = a.enemies.length - 1; j >= 0; j--) {
+        const e = a.enemies[j];
+        if (ND.distT(b.x, b.y, e.x, e.y) < e.r + 5) {
+          e.hp -= b.crit ? 30 : 12;
+          e.flash = 0.12;
+          a.bullets.splice(i, 1);
+          ND.spawnParticles(b.x, b.y, 4, {
+            color: '#8ef0ff', speed: 150, life: 0.28, size: 2
+          });
+          if (e.hp <= 0) {
+            // Kill it here rather than through killEnemy: no score, no scrap,
+            // no XP — the demo must not touch run state.
+            ND.spawnParticles(e.x, e.y, 16, {
+              color: '#ff3b6b', speed: 260, life: 0.55, size: 3, drag: 2.4
+            });
+            ND.audio.play('explode');
+            a.enemies.splice(j, 1);
+          }
+          break;
+        }
+      }
+    }
+
+    // --- enemies chase the demo ship ---
+    for (const e of a.enemies) {
+      e.flash = Math.max(0, (e.flash || 0) - dt);
+      const dx = ND.delta(e.x, a.x, ND.WORLD.w);
+      const dy = ND.delta(e.y, a.y, ND.WORLD.h);
+      const d = Math.hypot(dx, dy) || 1;
+      const sp = (e.speed || 90) * 0.9;
+      e.x = ND.wrapX(e.x + (dx / d) * sp * dt);
+      e.y = ND.wrapY(e.y + (dy / d) * sp * dt);
+      e.angle = Math.atan2(dy, dx);
+      e.hitFlash = e.flash > 0 ? 1 : 0;
+      if (e.hp < e.maxHp * 0.999) e.hpBar = true;
+    }
+
+    // keep the arena populated
+    if (a.enemies.length < 4 && Math.random() < dt * 2.2) spawnAttractEnemy(a);
+
+    // camera trails the demo ship. The title panel occupies the middle of the
+    // screen, so aim the camera slightly *below* the ship: the ship then sits
+    // in the upper third, clear of the text, with the panel over empty space.
+    const tx = a.x - ND.view.w / 2;
+    const ty = a.y - ND.view.h * 0.30;
+    const smooth = 1 - Math.pow(0.002, dt);
+    a.camX += ND.delta(a.camX, tx, ND.WORLD.w) * smooth;
+    a.camY += ND.delta(a.camY, ty, ND.WORLD.h) * smooth;
+    a.camX = ND.wrapX(a.camX);
+    a.camY = ND.wrapY(a.camY);
+  }
+
+  function drawAttract(ctx, camX, camY) {
+    const a = game.attract;
+    if (!a) return;
+    ctx.save();
+    ctx.translate(-camX, -camY);
+
+    for (const e of a.enemies) {
+      drawTiled(e.x, e.y, 80, () => ND.drawEnemy(ctx, e));
+    }
+    for (const b of a.bullets) {
+      drawTiled(b.x, b.y, 40, () => {
+        ctx.save();
+        ctx.strokeStyle = b.crit ? '#ffd166' : '#8ef0ff';
+        ctx.lineWidth = b.crit ? 3 : 2;
+        ctx.shadowColor = ctx.strokeStyle;
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(b.x - b.vx * 0.012, b.y - b.vy * 0.012);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+    // demo ship: the real silhouette, drawn from a tiny stand-in
+    ctx.save();
+    const p = a;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.angle);
+    ctx.strokeStyle = '#22d3ee';
+    ctx.fillStyle = 'rgba(34,211,238,0.16)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#22d3ee';
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(-11, 11);
+    ctx.lineTo(-6, 0);
+    ctx.lineTo(-11, -11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // engine trail
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = 'rgba(34,211,238,0.5)';
+    ctx.beginPath();
+    ctx.arc(p.x - Math.cos(p.angle) * 14, p.y - Math.sin(p.angle) * 14, 5, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+
+    ND.drawParticles(ctx, camX, camY, tilesX, tilesY);
+    ctx.restore();
+  }
+
+  // ---------------- launch transition ----------------
+  // Pressing play detonates the demo: a shockwave swallows the screen, debris
+  // flies, then the run begins underneath the wash. The overlay is hidden
+  // immediately so the wipe is fully visible, and the run is already live when
+  // the white-out fades — the two never sit side by side.
+  const LAUNCH_DURATION = 0.85;
+
+  function beginLaunch() {
+    const sx = ND.view.w / 2;
+    const sy = ND.view.h / 2;
+
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    game.attract = null;
+    // Roll the run first: reset() clears particles and the world, so anything
+    // spawned before this call would be wiped out.
+    startGame({ skipBlast: true });
+
+    // Reduced motion: no flash, no shake — just the run, with chrome restored.
+    if (reduce) {
+      setRunChrome(true);
+      return;
+    }
+
+    game.launchFx = {
+      t: 0,
+      duration: LAUNCH_DURATION,
+      x: sx,
+      y: sy
+    };
+
+    // Sparks are world-space (particles are drawn under the camera transform),
+    // so spawn them on the ship — which is screen-centre right after reset.
+    const px = game.player ? game.player.x : sx;
+    const py = game.player ? game.player.y : sy;
+    ND.spawnParticles(px, py, 90, {
+      color: '#22d3ee', speed: 900, life: 1.1, size: 5, drag: 1.2
+    });
+    ND.spawnParticles(px, py, 40, {
+      color: '#ffffff', speed: 620, life: 0.8, size: 3.5, drag: 1.4
+    });
+    ND.spawnParticles(px, py, 30, {
+      color: '#ff8a3c', speed: 740, life: 1.0, size: 4, drag: 1.1
+    });
+
+    ND.addShake(26);
+    ND.audio.play('explode');
+    ND.audio.play('level');
+  }
+
+  function drawLaunchFx(ctx) {
+    const f = game.launchFx;
+    if (!f) return;
+    const k = ND.clamp(f.t / f.duration, 0, 1);
+
+    // 1. Shockwave ring: snaps outward, thinning as it goes.
+    const ringR = k * Math.max(ND.view.w, ND.view.h) * 0.95;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - k * 1.05);
+    ctx.strokeStyle = '#dffcff';
+    ctx.lineWidth = 20 * (1 - k) + 1.5;
+    ctx.shadowColor = '#22d3ee';
+    ctx.shadowBlur = 50;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, ringR, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+
+    // 2. White-out core: blooms hard, then fades. This is what hides the swap
+    //    from the demo world to the real run, so it must peak near-opaque.
+    const core = Math.max(0, 1 - k * 2.1);
+    if (core > 0.001) {
+      const g = ctx.createRadialGradient(
+        f.x, f.y, 0,
+        f.x, f.y, Math.max(ND.view.w, ND.view.h) * (0.35 + k * 1.1)
+      );
+      g.addColorStop(0, 'rgba(255,255,255,' + (core * 0.96) + ')');
+      g.addColorStop(0.28, 'rgba(190,250,255,' + (core * 0.85) + ')');
+      g.addColorStop(0.55, 'rgba(34,211,238,' + (core * 0.5) + ')');
+      g.addColorStop(0.8, 'rgba(140,90,255,' + (core * 0.18) + ')');
+      g.addColorStop(1, 'rgba(3,5,10,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, ND.view.w, ND.view.h);
+    }
+
+    // 3. Trailing chromatic smear while the wave is near full screen.
+    if (k > 0.5) {
+      const a = (k - 0.5) * 2;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = a * 0.16;
+      ctx.fillStyle = '#ff2b8a';
+      ctx.fillRect(-6 * a, 0, ND.view.w, ND.view.h);
+      ctx.fillStyle = '#22d3ee';
+      ctx.fillRect(6 * a, 0, ND.view.w, ND.view.h);
+      ctx.restore();
+    }
   }
 
   // ---------------- upgrades UI ----------------
@@ -1967,20 +2329,50 @@
     }
   }
 
-  function startGame() {
+  function startGame(opts) {
+    const skipBlast = !!(opts && opts.skipBlast);
     ND.audio.init();
     reset();
     game.state = 'playing';
+    game.attract = null;
     hideAllOverlays();
     $('hudbar').classList.remove('hidden');
     setBuildVisible(true);
+    // During the launch wipe the HTML chrome would sit on top of the flash, so
+    // it is held back and revealed as the blast clears (see frame()).
+    if (skipBlast) setRunChrome(false);
     // Paint the tracker now; otherwise an empty build shows stale markup until
     // the first purchase.
     renderBuild();
     ND.music.intensity = 1;
     ND.music.play('track');
-    toast('WAVE 1 // ENGAGE', '#22d3ee');
+    // The blast toast would fight the launch shockwave for attention.
+    if (!skipBlast) toast('WAVE 1 // ENGAGE', '#22d3ee');
     last = performance.now();
+  }
+
+  // The DOM control bar and build tracker, toggled together.
+  function setRunChrome(on) {
+    $('hudbar').classList.toggle('hidden', !on);
+    setBuildVisible(!!on);
+  }
+
+  // Entry point for the menu button: detonate the demo, then roll the run.
+  function launchRun() {
+    if (game.state !== 'menu') return;
+    ND.audio.init();
+    // Fade the title out a beat before the run swaps in, so the shockwave is
+    // never competing with a semi-transparent title.
+    const start = $('start');
+    if (start) start.classList.add('is-launching');
+    const go = () => {
+      if (start) start.classList.remove('is-launching');
+      beginLaunch();
+    };
+    // Respect reduced-motion: skip straight to the run, no flash.
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { go(); return; }
+    setTimeout(go, 140);
   }
 
   function hideAllOverlays() {
@@ -2025,6 +2417,9 @@
     ND.music.intensity = 1;
     ND.music.play('menu');
     $('start').classList.remove('hidden');
+    // Returning to the title restarts the demo behind it.
+    resetAttract();
+    game.launchFx = null;
   }
 
   function clearWorld() {
@@ -2146,7 +2541,7 @@
   };
 
   // ---------------- UI wiring ----------------
-  $('play').addEventListener('click', startGame);
+  $('play').addEventListener('click', launchRun);
 
   // Browsers require a gesture before audio can start, so the title-screen
   // music begins on the first interaction with the page.
@@ -2256,4 +2651,6 @@
   requestAnimationFrame(frame);
   showMenuBest();
   renderMeta();
+  // The title is the first thing anyone sees, so start the demo immediately.
+  resetAttract();
 })(window.ND);

@@ -64,6 +64,74 @@ body::after {
 
 .overlay.hidden { display: none; }
 
+/* The title sits over the attract-mode demo, so it must not black it out.
+   A lighter wash plus no backdrop blur keeps the fight readable behind the
+   text while still letting the headline pop. */
+#start {
+  background: radial-gradient(circle at 50% 42%, rgba(4, 8, 16, 0.10), rgba(3, 5, 10, 0.55));
+  backdrop-filter: none;
+}
+
+/* The persistent-systems panel is a solid slab over the demo. Make it a
+   translucent HUD card instead, so the fight keeps moving behind it. */
+#start .meta {
+  background: rgba(4, 8, 14, 0.34);
+  border: 1px solid rgba(34, 211, 238, 0.14);
+  border-radius: 5px;
+  padding: 10px 12px 8px;
+  backdrop-filter: blur(2px);
+}
+
+/* Rows inside the panel must not re-opaque the demo behind them. */
+#start .meta-row {
+  background: transparent;
+}
+
+#start .meta-row:hover {
+  background: rgba(34, 211, 238, 0.06);
+}
+
+/* Staggered entrance: the title, tag, then the panel ease up into place. */
+#start h1 {
+  animation: driftIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+#start .tag {
+  animation: driftIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.1s both;
+}
+
+#start .meta,
+#start .controls {
+  animation: driftIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.18s both;
+}
+
+#start #play {
+  animation: driftIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.26s both;
+}
+
+@keyframes driftIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* While the launch blast plays, the whole title must get out of the way
+   instantly — the shockwave is the transition. */
+#start.is-launching {
+  animation: launchOut 0.16s ease-in forwards;
+}
+
+@keyframes launchOut {
+  to { opacity: 0; transform: scale(1.06); }
+}
+
 @keyframes fade {
   from { opacity: 0; }
   to { opacity: 1; }
