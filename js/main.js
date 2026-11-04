@@ -1076,13 +1076,28 @@
         ND.view.w / 2, ND.view.h * 0.42, Math.max(ND.view.w, ND.view.h) * 0.85
       );
       // Light touch: the demo is the point, so it must stay clearly visible.
-      // Only the very centre (behind the headline) is knocked back.
-      dim.addColorStop(0, 'rgba(3,6,12,0.34)');
-      dim.addColorStop(0.5, 'rgba(3,6,12,0.20)');
-      dim.addColorStop(1, 'rgba(3,6,12,0.55)');
+      // Only the very centre (behind the headline) is knocked back, and the
+      // edges get a soft vignette so the title text keeps its contrast.
+      dim.addColorStop(0, 'rgba(3,6,12,0.16)');
+      dim.addColorStop(0.5, 'rgba(3,6,12,0.06)');
+      dim.addColorStop(0.86, 'rgba(3,6,12,0.28)');
+      dim.addColorStop(1, 'rgba(3,6,12,0.60)');
       ctx.fillStyle = dim;
       ctx.fillRect(0, 0, ND.view.w, ND.view.h);
       ctx.restore();
+
+      // Text-protection scrim: only the top band (headline + tag) and the very
+      // bottom (launch button) are darkened. The middle stays open so the fight
+      // shows through the translucent systems panel.
+      const scrim = ctx.createLinearGradient(0, 0, 0, ND.view.h);
+      scrim.addColorStop(0, 'rgba(3,5,10,0.62)');
+      scrim.addColorStop(0.13, 'rgba(3,5,10,0.30)');
+      scrim.addColorStop(0.22, 'rgba(3,5,10,0.04)');
+      scrim.addColorStop(0.78, 'rgba(3,5,10,0.04)');
+      scrim.addColorStop(0.92, 'rgba(3,5,10,0.42)');
+      scrim.addColorStop(1, 'rgba(3,5,10,0.66)');
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, 0, ND.view.w, ND.view.h);
 
       drawLaunchFx(ctx);
       return;
@@ -1287,7 +1302,9 @@
       // Camera drifts on its own so the shot never feels locked off.
       camX: w / 2 - ND.view.w / 2,
       camY: h / 2 - ND.view.h / 2,
-      orbit: Math.random() * Math.PI * 2
+      orbit: Math.random() * Math.PI * 2,
+      anchorX: w / 2,
+      anchorY: h / 2
     };
     game.attract = a;
     return a;
@@ -1295,9 +1312,9 @@
 
   function spawnAttractEnemy(a) {
     if (a.enemies.length >= ATTRACT_MAX) return;
-    // Ring spawn just outside the visible edge, like the real spawner.
+    // Ring spawn just inside the visible edge, so the approach is on screen.
     const ang = Math.random() * TAU;
-    const rad = Math.max(ND.view.w, ND.view.h) * 0.62;
+    const rad = Math.max(ND.view.w, ND.view.h) * 0.28;
     const x = ND.wrapX(a.x + Math.cos(ang) * rad);
     const y = ND.wrapY(a.y + Math.sin(ang) * rad);
     // A throwaway game object so the demo never touches the real spawn list
@@ -1315,24 +1332,35 @@
     const a = game.attract || resetAttract();
     a.t += dt;
 
-    // --- kite: steer away from the local crowd, drift when clear ---
-    let fx = 0, fy = 0, nearest = null, nd = 1e9;
+    // --- kite: circle the local crowd rather than outrun it ---
+    // The demo ship used to flee at full speed, which meant the chasers (at
+    // ~90px/s) could never catch up and simply trailed off-screen. Instead it
+    // orbits a slowly drifting centre, so enemies stay in frame and in view.
+    let nearest = null, nd = 1e9;
     for (const e of a.enemies) {
       const d = ND.distT(e.x, e.y, a.x, a.y);
       if (d < nd) { nd = d; nearest = e; }
-      if (d < 260) {
-        const k = (260 - d) / 260;
-        fx += ND.delta(a.x, e.x, ND.WORLD.w) * k * 0.02;
-        fy += ND.delta(a.y, e.y, ND.WORLD.h) * k * 0.02;
-      }
     }
-    // slow orbit so movement reads as purposeful rather than random
-    a.orbit += dt * 0.5;
-    fx += Math.cos(a.orbit) * 0.35;
-    fy += Math.sin(a.orbit * 1.3) * 0.35;
+
+    // The orbit centre drifts gently so the shot travels across the arena.
+    a.orbit += dt * 0.35;
+    const cx = a.anchorX + Math.cos(a.orbit * 0.42) * 90;
+    const cy = a.anchorY + Math.sin(a.orbit * 0.31) * 55;
+
+    // Travel *around* that centre at a fixed radius: always moving, never
+    // sprinting away, so the chase stays on screen. The radius and speed are
+    // both small enough that the (faster) chasers close in from all sides.
+    const ringR = 120;
+    const ox = ND.wrapX(a.x) - cx;
+    const oy = ND.wrapY(a.y) - cy;
+    const od = Math.hypot(ox, oy) || 1;
+    const tangX = -oy / od, tangY = ox / od;
+    const radialErr = (ringR - od) / ringR;      // pull back onto the ring
+    const fx = tangX + (ox / od) * radialErr * 1.6;
+    const fy = tangY + (oy / od) * radialErr * 1.6;
 
     const fl = Math.hypot(fx, fy) || 1;
-    const speed = 168;
+    const speed = 96;
     a.vx += ((fx / fl) * speed - a.vx) * Math.min(1, dt * 4);
     a.vy += ((fy / fl) * speed - a.vy) * Math.min(1, dt * 4);
     a.x = ND.wrapX(a.x + a.vx * dt);
@@ -1406,13 +1434,13 @@
     }
 
     // keep the arena populated
-    if (a.enemies.length < 4 && Math.random() < dt * 2.2) spawnAttractEnemy(a);
+    if (a.enemies.length < 5 && Math.random() < dt * 3) spawnAttractEnemy(a);
 
-    // camera trails the demo ship. The title panel occupies the middle of the
-    // screen, so aim the camera slightly *below* the ship: the ship then sits
-    // in the upper third, clear of the text, with the panel over empty space.
-    const tx = a.x - ND.view.w / 2;
-    const ty = a.y - ND.view.h * 0.30;
+    // The title overlay fills the viewport, so the demo is always seen *through*
+    // the UI. Keep it centred (where the ship and its tracers read best) and
+    // lean on contrast instead of trying to dodge the panel.
+    const tx = cx - ND.view.w / 2;
+    const ty = cy - ND.view.h / 2;
     const smooth = 1 - Math.pow(0.002, dt);
     a.camX += ND.delta(a.camX, tx, ND.WORLD.w) * smooth;
     a.camY += ND.delta(a.camY, ty, ND.WORLD.h) * smooth;
@@ -1448,19 +1476,24 @@
     const p = a;
     ctx.translate(p.x, p.y);
     ctx.rotate(p.angle);
-    ctx.strokeStyle = '#22d3ee';
-    ctx.fillStyle = 'rgba(34,211,238,0.16)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#7df9ff';
+    ctx.fillStyle = 'rgba(34,211,238,0.35)';
+    ctx.lineWidth = 2.4;
     ctx.shadowColor = '#22d3ee';
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 26;
     ctx.beginPath();
-    ctx.moveTo(16, 0);
-    ctx.lineTo(-11, 11);
+    ctx.moveTo(18, 0);
+    ctx.lineTo(-12, 12);
     ctx.lineTo(-6, 0);
-    ctx.lineTo(-11, -11);
+    ctx.lineTo(-12, -12);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    // inner core so the ship reads even at a glance
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.4, 0, TAU);
+    ctx.fillStyle = '#dffcff';
+    ctx.fill();
     ctx.restore();
 
     // engine trail

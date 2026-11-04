@@ -75,11 +75,13 @@ body::after {
 /* The persistent-systems panel is a solid slab over the demo. Make it a
    translucent HUD card instead, so the fight keeps moving behind it. */
 #start .meta {
-  background: rgba(4, 8, 14, 0.34);
+  background: rgba(4, 8, 14, 0.22);
   border: 1px solid rgba(34, 211, 238, 0.14);
   border-radius: 5px;
   padding: 10px 12px 8px;
-  backdrop-filter: blur(2px);
+  /* No backdrop blur: this panel sits directly over the attract-mode fight,
+     and blurring it turns the action into unreadable mush. A plain tint keeps
+     the demo sharp while still holding the text. */
 }
 
 /* Rows inside the panel must not re-opaque the demo behind them. */
