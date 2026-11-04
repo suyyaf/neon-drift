@@ -1332,6 +1332,12 @@
     const a = game.attract || resetAttract();
     a.t += dt;
 
+    // Particles are normally aged inside update(), which only runs while
+    // playing. On the menu nothing advanced them, so demo kill-shrapnel
+    // spawned, never aged, and accumulated on the canvas as frozen dots until
+    // it hit the 900-particle cap.
+    ND.updateParticles(dt);
+
     // --- kite: circle the local crowd rather than outrun it ---
     // The demo ship used to flee at full speed, which meant the chasers (at
     // ~90px/s) could never catch up and simply trailed off-screen. Instead it
