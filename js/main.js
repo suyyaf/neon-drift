@@ -805,11 +805,17 @@
   let tilesY = [0];
 
   // Draw a world-space object, repeating it across whichever seams are visible.
+  // The cull window must match the camera that produced tilesX/tilesY, which is
+  // not always game.camX (attract mode has its own camera). Using the wrong one
+  // culled nearly every demo object, which is why the menu looked empty.
+  let drawCamX = 0;
+  let drawCamY = 0;
+
   function drawTiled(wx, wy, margin, fn) {
-    const x0 = game.camX - margin;
-    const x1 = game.camX + ND.view.w + margin;
-    const y0 = game.camY - margin;
-    const y1 = game.camY + ND.view.h + margin;
+    const x0 = drawCamX - margin;
+    const x1 = drawCamX + ND.view.w + margin;
+    const y0 = drawCamY - margin;
+    const y1 = drawCamY + ND.view.h + margin;
 
     for (let i = 0; i < tilesX.length; i++) {
       const dx = tilesX[i];
@@ -1064,6 +1070,9 @@
 
     tilesX = tileOffsets(camX, ND.view.w, ND.WORLD.w);
     tilesY = tileOffsets(camY, ND.view.h, ND.WORLD.h);
+    // Keep drawTiled's cull window in sync with the camera actually in use.
+    drawCamX = camX;
+    drawCamY = camY;
 
     // Attract mode has its own world; the run's arrays are empty on the menu.
     if (attract) {
@@ -1322,7 +1331,10 @@
     const shim = { wave: 1, enemies: [] };
     const e = ND.spawnEnemy('chaser', x, y, shim);
     if (!e) return;
-    e.hp = e.maxHp = 26;   // three hits, so kills happen on screen
+    // Three-round spread volleys do ~24 damage, so 26 HP killed an enemy in a
+    // single burst and the demo never showed a sustained fight. 78 HP means
+    // roughly three volleys, which keeps targets alive long enough to read.
+    e.hp = e.maxHp = 78;
     e.speed *= 0.85;
     e.attract = true;
     a.enemies.push(e);
@@ -1337,6 +1349,7 @@
     // spawned, never aged, and accumulated on the canvas as frozen dots until
     // it hit the 900-particle cap.
     ND.updateParticles(dt);
+    a.muzzle = Math.max(0, (a.muzzle || 0) - dt);
 
     // --- kite: circle the local crowd rather than outrun it ---
     // The demo ship used to flee at full speed, which meant the chasers (at
@@ -1383,15 +1396,23 @@
     if (a.cooldown <= 0) {
       a.cooldown = 0.13;
       const sp = 760;
-      const isCrit = Math.random() < 0.12;
-      a.bullets.push({
-        x: a.x + Math.cos(a.angle) * 18,
-        y: a.y + Math.sin(a.angle) * 18,
-        vx: Math.cos(a.angle) * sp,
-        vy: Math.sin(a.angle) * sp,
-        life: 1.1,
-        crit: isCrit
-      });
+      // Fire a three-round spread. A single stream left only ~1.4 bullets on
+      // screen at any instant (they connect within a couple hundred pixels),
+      // so the demo read as a still image more often than a firefight.
+      for (let s = -1; s <= 1; s++) {
+        a.bullets.push({
+          x: a.x + Math.cos(a.angle) * 18,
+          y: a.y + Math.sin(a.angle) * 18,
+          vx: Math.cos(a.angle + s * 0.07) * sp,
+          vy: Math.sin(a.angle + s * 0.07) * sp,
+          life: 1.1,
+          crit: s === 0 && Math.random() < 0.12
+        });
+      }
+      // Muzzle flash: without it the demo only shows tracers already in
+      // flight, so the screen can look static between volleys.
+      a.muzzle = 0.09;
+      a.muzzleAngle = a.angle;
       ND.audio.play('shoot');
     }
 
@@ -1425,22 +1446,35 @@
       }
     }
 
-    // --- enemies chase the demo ship ---
+    // --- enemies close in, then hold a standoff ---
+    // Without a standoff they piled onto the ship, so every tracer was a few
+    // pixels long and the whole fight collapsed into one unreadable knot
+    // behind the panel text. Holding range keeps long tracers on screen.
     for (const e of a.enemies) {
       e.flash = Math.max(0, (e.flash || 0) - dt);
       const dx = ND.delta(e.x, a.x, ND.WORLD.w);
       const dy = ND.delta(e.y, a.y, ND.WORLD.h);
       const d = Math.hypot(dx, dy) || 1;
       const sp = (e.speed || 90) * 0.9;
-      e.x = ND.wrapX(e.x + (dx / d) * sp * dt);
-      e.y = ND.wrapY(e.y + (dy / d) * sp * dt);
+      const STANDOFF = 130;
+      if (d > STANDOFF) {
+        e.x = ND.wrapX(e.x + (dx / d) * sp * dt);
+        e.y = ND.wrapY(e.y + (dy / d) * sp * dt);
+      } else {
+        // Circle at range so the pack orbits instead of stacking.
+        const tangent = 0.55;
+        e.x = ND.wrapX(e.x + (-dy / d) * sp * tangent * dt);
+        e.y = ND.wrapY(e.y + (dx / d) * sp * tangent * dt);
+      }
       e.angle = Math.atan2(dy, dx);
       e.hitFlash = e.flash > 0 ? 1 : 0;
       if (e.hp < e.maxHp * 0.999) e.hpBar = true;
     }
 
     // keep the arena populated
-    if (a.enemies.length < 5 && Math.random() < dt * 3) spawnAttractEnemy(a);
+    // Keep the arena dense: with the spread volley enemies die quickly, so a
+    // slow trickle left the screen empty between fights.
+    if (a.enemies.length < 7 && Math.random() < dt * 9) spawnAttractEnemy(a);
 
     // The title overlay fills the viewport, so the demo is always seen *through*
     // the UI. Keep it centred (where the ship and its tracers read best) and
@@ -1461,19 +1495,48 @@
     ctx.translate(-camX, -camY);
 
     for (const e of a.enemies) {
-      drawTiled(e.x, e.y, 80, () => ND.drawEnemy(ctx, e));
+      drawTiled(e.x, e.y, 80, () => {
+        // The real enemy radius is scaled by SHIP (0.65) for gameplay, which
+        // leaves a ~10px shape — far too small to read behind the title UI.
+        // The demo is a mood piece, so it draws them oversized.
+        ctx.save();
+        ctx.translate(e.x, e.y);
+        ctx.scale(1.55, 1.55);
+        ctx.translate(-e.x, -e.y);
+        ND.drawEnemy(ctx, e);
+        ctx.restore();
+      });
     }
     for (const b of a.bullets) {
       drawTiled(b.x, b.y, 40, () => {
+        // Match the real drawBullet() proportions: a thick tracer plus a
+        // white-hot core. The old version was a 2px, 9px-long hairline with no
+        // core, which simply disappeared against the grid.
+        const speed = Math.hypot(b.vx, b.vy) || 1;
+        const tx = -b.vx / speed;
+        const ty = -b.vy / speed;
+        // Long, thick tracers. At 19px these were nearly invisible behind the
+        // title UI, so the demo looked like it was not shooting at all.
+        const len = b.crit ? 52 : 40;
+
         ctx.save();
+        ctx.lineCap = 'round';
         ctx.strokeStyle = b.crit ? '#ffd166' : '#8ef0ff';
-        ctx.lineWidth = b.crit ? 3 : 2;
+        ctx.lineWidth = b.crit ? 7 : 5;
         ctx.shadowColor = ctx.strokeStyle;
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 24;
         ctx.beginPath();
-        ctx.moveTo(b.x - b.vx * 0.012, b.y - b.vy * 0.012);
-        ctx.lineTo(b.x, b.y);
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x + tx * len, b.y + ty * len);
         ctx.stroke();
+
+        // hot core
+        ctx.beginPath();
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 16;
+        ctx.shadowColor = '#ffffff';
+        ctx.arc(b.x, b.y, b.crit ? 3.4 : 2.8, 0, TAU);
+        ctx.fill();
         ctx.restore();
       });
     }
@@ -1500,6 +1563,27 @@
     ctx.arc(0, 0, 3.4, 0, TAU);
     ctx.fillStyle = '#dffcff';
     ctx.fill();
+
+    // muzzle flash, drawn in the ship's own frame
+    if (a.muzzle > 0) {
+      const k = a.muzzle / 0.09;
+      ctx.save();
+      ctx.rotate(a.muzzleAngle - a.angle);
+      ctx.globalAlpha = k;
+      ctx.fillStyle = '#dffcff';
+      ctx.shadowColor = '#7df9ff';
+      ctx.shadowBlur = 24;
+      ctx.beginPath();
+      ctx.moveTo(18, 0);
+      ctx.lineTo(30 + 8 * k, 0);
+      ctx.lineTo(18, 5 * k);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(20, 0, 2.6 * k, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
     ctx.restore();
 
     // engine trail
