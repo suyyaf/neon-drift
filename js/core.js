@@ -69,11 +69,13 @@ window.ND = window.ND || {};
     if (badFor > 100 && ND.quality > 0) {
       ND.quality--;
       badFor = 0;
+      goodFor = 0;
       frameAvg = 16.7;
       resize();
     } else if (goodFor > 420 && ND.quality < (ND.isTouch ? 1 : 2)) {
       ND.quality++;
       goodFor = 0;
+      badFor = 0;
       frameAvg = 16.7;
       resize();
     }
